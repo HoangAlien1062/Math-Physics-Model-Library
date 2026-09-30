@@ -143,9 +143,10 @@ export function UploadModal({ isOpen, onClose, onUploadSuccess }: UploadModalPro
 
       setTimeout(() => {
         if (onUploadSuccess) onUploadSuccess();
+        window.dispatchEvent(new Event('model-updated'));
         onClose();
         resetForm();
-      }, 1000);
+      }, 800);
     } catch (err: any) {
       console.error(err);
       setUploadStatus('error');

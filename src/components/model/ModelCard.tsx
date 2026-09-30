@@ -55,6 +55,7 @@ export function ModelCard({
       if (onDelete) {
         onDelete(model.id);
       }
+      window.dispatchEvent(new Event('model-updated'));
     } catch (err: any) {
       showToast(err.message || 'Không thể xóa mô hình', 'error');
       setIsDeleting(false);

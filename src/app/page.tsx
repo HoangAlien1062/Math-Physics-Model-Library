@@ -21,54 +21,54 @@ export default function HomePage() {
 
   useEffect(() => {
     let isCancelled = false;
-    const controller = new AbortController();
-    const timer = setTimeout(() => {
-      controller.abort();
-      if (!isCancelled) setLoading(false);
-    }, 4000);
 
-    // 1. Fetch personal models
-    fetch('/api/models', { signal: controller.signal })
-      .then(async (res) => {
-        if (!res.ok) throw new Error('HTTP ' + res.status);
-        return res.json();
-      })
-      .then((data) => {
-        if (!isCancelled && data.success && Array.isArray(data.models)) {
-          setAllModels(data.models);
-        }
-      })
-      .catch((err) => {
-        if (!isCancelled) console.warn('Could not fetch models:', err);
-      })
-      .finally(() => {
-        clearTimeout(timer);
-        if (!isCancelled) setLoading(false);
-      });
+    const loadData = () => {
+      // 1. Fetch personal models
+      fetch('/api/models')
+        .then(async (res) => {
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          return res.json();
+        })
+        .then((data) => {
+          if (!isCancelled && data.success && Array.isArray(data.models)) {
+            setAllModels(data.models);
+          }
+        })
+        .catch((err) => {
+          if (!isCancelled) console.warn('Could not fetch models:', err);
+        })
+        .finally(() => {
+          if (!isCancelled) setLoading(false);
+        });
 
-    // 2. Fetch recent and favorites
-    fetch('/api/recent')
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.success && data.recentModels) {
-          setRecentModels(data.recentModels);
-        }
-      })
-      .catch(() => {});
+      // 2. Fetch recent and favorites
+      fetch('/api/recent')
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.success && data.recentModels) {
+            setRecentModels(data.recentModels);
+          }
+        })
+        .catch(() => {});
 
-    fetch('/api/favorites')
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.success && data.favorites) {
-          setFavoriteIds(data.favorites);
-        }
-      })
-      .catch(() => {});
+      fetch('/api/favorites')
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.success && data.favorites) {
+            setFavoriteIds(data.favorites);
+          }
+        })
+        .catch(() => {});
+    };
+
+    loadData();
+
+    const handleModelUpdate = () => loadData();
+    window.addEventListener('model-updated', handleModelUpdate);
 
     return () => {
       isCancelled = true;
-      controller.abort();
-      clearTimeout(timer);
+      window.removeEventListener('model-updated', handleModelUpdate);
     };
   }, []);
 

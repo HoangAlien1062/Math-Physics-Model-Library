@@ -69,48 +69,47 @@ export function SubjectView({ subject, title, description }: SubjectViewProps) {
     let isCancelled = false;
     setLoading(true);
 
-    const controller = new AbortController();
-    const timer = setTimeout(() => {
-      controller.abort();
-      if (!isCancelled) setLoading(false);
-    }, 4000); // 4 second safety max
+    const loadModels = () => {
+      const params = new URLSearchParams();
+      params.set('subject', subject);
+      if (selectedCategory && selectedCategory !== 'all') {
+        params.set('category', selectedCategory);
+      }
+      if (debouncedSearch.trim()) {
+        params.set('search', debouncedSearch.trim());
+      }
+      params.set('sort', sortOption);
 
-    const params = new URLSearchParams();
-    params.set('subject', subject);
-    if (selectedCategory && selectedCategory !== 'all') {
-      params.set('category', selectedCategory);
-    }
-    if (debouncedSearch.trim()) {
-      params.set('search', debouncedSearch.trim());
-    }
-    params.set('sort', sortOption);
+      fetch(`/api/models?${params.toString()}`)
+        .then(async (res) => {
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          return res.json();
+        })
+        .then((data) => {
+          if (!isCancelled && data.success && Array.isArray(data.models)) {
+            setModels(data.models);
+          }
+        })
+        .catch((err) => {
+          if (!isCancelled) {
+            console.warn('Could not load models from API, keeping current state:', err);
+          }
+        })
+        .finally(() => {
+          if (!isCancelled) {
+            setLoading(false);
+          }
+        });
+    };
 
-    fetch(`/api/models?${params.toString()}`, { signal: controller.signal })
-      .then(async (res) => {
-        if (!res.ok) throw new Error('HTTP ' + res.status);
-        return res.json();
-      })
-      .then((data) => {
-        if (!isCancelled && data.success && Array.isArray(data.models)) {
-          setModels(data.models);
-        }
-      })
-      .catch((err) => {
-        if (!isCancelled) {
-          console.warn('Could not load models from API, keeping current state:', err);
-        }
-      })
-      .finally(() => {
-        clearTimeout(timer);
-        if (!isCancelled) {
-          setLoading(false);
-        }
-      });
+    loadModels();
+
+    const handleModelUpdate = () => loadModels();
+    window.addEventListener('model-updated', handleModelUpdate);
 
     return () => {
       isCancelled = true;
-      controller.abort();
-      clearTimeout(timer);
+      window.removeEventListener('model-updated', handleModelUpdate);
     };
   }, [subject, selectedCategory, debouncedSearch, sortOption]);
 

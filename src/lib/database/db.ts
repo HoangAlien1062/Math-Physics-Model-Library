@@ -115,6 +115,17 @@ class DatabaseManager {
     this.data = this.loadLocalData();
   }
 
+  private sanitizeModels(models: any[]): Model[] {
+    if (!Array.isArray(models)) return [];
+    return models.filter((m) => {
+      if (!m || typeof m !== 'object') return false;
+      const id = String(m.id || '');
+      const driveFileId = String(m.driveFileId || '');
+      if (id.startsWith('demo-') || driveFileId.startsWith('demo_')) return false;
+      return true;
+    });
+  }
+
   private loadLocalData(): DataStore {
     if (fs.existsSync(this.dataFilePath)) {
       try {
@@ -122,9 +133,13 @@ class DatabaseManager {
         const parsed = JSON.parse(raw);
         return {
           categories: parsed.categories?.length ? parsed.categories : DEFAULT_CATEGORIES,
-          models: Array.isArray(parsed.models) ? parsed.models : [],
-          favorites: Array.isArray(parsed.favorites) ? parsed.favorites : [],
-          recentViews: Array.isArray(parsed.recentViews) ? parsed.recentViews : [],
+          models: this.sanitizeModels(parsed.models),
+          favorites: Array.isArray(parsed.favorites)
+            ? parsed.favorites.filter((fid: string) => !fid.startsWith('demo-'))
+            : [],
+          recentViews: Array.isArray(parsed.recentViews)
+            ? parsed.recentViews.filter((r: any) => !r.modelId?.startsWith('demo-'))
+            : [],
           deletedIds: Array.isArray(parsed.deletedIds) ? parsed.deletedIds : [],
         };
       } catch (err) {
@@ -146,25 +161,60 @@ class DatabaseManager {
   async syncFromCloudStorage(): Promise<void> {
     if (this.cloudSynced) return;
 
-    // 1. Google Drive: Master Persistent Source of Truth across all Vercel instances
-    try {
-      const storage = getStorageProvider();
-      if (storage instanceof GoogleDriveStorageProvider && storage.isConfigured()) {
-        const driveJson = await storage.getDbJson();
-        if (driveJson) {
-          const parsed = JSON.parse(driveJson);
+    // 1. Fast Layer: Supabase Storage (Global CDN - takes ~50ms, super smooth & fast)
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        const { data, error } = await withTimeout(
+          supabase.storage.from('models-cache').download('metadata/db.json'),
+          1500
+        );
+
+        if (!error && data) {
+          const text = await data.text();
+          const parsed = JSON.parse(text);
           if (parsed && typeof parsed === 'object') {
             if (Array.isArray(parsed.models)) {
-              this.data.models = parsed.models;
+              this.data.models = this.sanitizeModels(parsed.models);
             }
             if (Array.isArray(parsed.deletedIds)) {
               this.data.deletedIds = parsed.deletedIds;
             }
             if (Array.isArray(parsed.favorites)) {
-              this.data.favorites = parsed.favorites;
+              this.data.favorites = parsed.favorites.filter((fid: string) => !fid.startsWith('demo-'));
             }
             if (Array.isArray(parsed.recentViews)) {
-              this.data.recentViews = parsed.recentViews;
+              this.data.recentViews = parsed.recentViews.filter((r: any) => !r.modelId?.startsWith('demo-'));
+            }
+            this.saveLocalData(this.data, false);
+            this.cloudSynced = true;
+            return;
+          }
+        }
+      } catch (e) {
+        // Fallback to Google Drive if Supabase cache miss
+      }
+    }
+
+    // 2. Master Backup Layer: Google Drive (Permanent source of truth)
+    try {
+      const storage = getStorageProvider();
+      if (storage instanceof GoogleDriveStorageProvider && storage.isConfigured()) {
+        const driveJson = await withTimeout(storage.getDbJson(), 4000);
+        if (driveJson) {
+          const parsed = JSON.parse(driveJson);
+          if (parsed && typeof parsed === 'object') {
+            if (Array.isArray(parsed.models)) {
+              this.data.models = this.sanitizeModels(parsed.models);
+            }
+            if (Array.isArray(parsed.deletedIds)) {
+              this.data.deletedIds = parsed.deletedIds;
+            }
+            if (Array.isArray(parsed.favorites)) {
+              this.data.favorites = parsed.favorites.filter((fid: string) => !fid.startsWith('demo-'));
+            }
+            if (Array.isArray(parsed.recentViews)) {
+              this.data.recentViews = parsed.recentViews.filter((r: any) => !r.modelId?.startsWith('demo-'));
             }
             this.saveLocalData(this.data, false);
             this.cloudSynced = true;
@@ -172,9 +222,9 @@ class DatabaseManager {
           }
         } else {
           // If no db.json yet, scan Google Drive Math and Physics folders for user uploaded files
-          const driveModels = await storage.scanDriveModels();
+          const driveModels = await withTimeout(storage.scanDriveModels(), 5000);
           if (driveModels && driveModels.length > 0) {
-            this.data.models = driveModels;
+            this.data.models = this.sanitizeModels(driveModels);
             this.saveLocalData(this.data, true);
             this.cloudSynced = true;
             return;
@@ -183,39 +233,6 @@ class DatabaseManager {
       }
     } catch (driveErr) {
       console.warn('[DB] Google Drive sync note:', driveErr);
-    }
-
-    // 2. Supabase Storage Fallback
-    const supabase = getSupabaseClient();
-    if (supabase) {
-      try {
-        const { data, error } = await withTimeout(
-          supabase.storage.from('models-cache').download('metadata/db.json'),
-          2500
-        );
-
-        if (!error && data) {
-          const text = await data.text();
-          const parsed = JSON.parse(text);
-          if (parsed && typeof parsed === 'object') {
-            if (Array.isArray(parsed.models)) {
-              this.data.models = parsed.models;
-            }
-            if (Array.isArray(parsed.deletedIds)) {
-              this.data.deletedIds = parsed.deletedIds;
-            }
-            if (Array.isArray(parsed.favorites)) {
-              this.data.favorites = parsed.favorites;
-            }
-            if (Array.isArray(parsed.recentViews)) {
-              this.data.recentViews = parsed.recentViews;
-            }
-            this.saveLocalData(this.data, false);
-            this.cloudSynced = true;
-            return;
-          }
-        }
-      } catch (e) {}
     }
 
     this.cloudSynced = true;
@@ -389,12 +406,12 @@ class DatabaseManager {
 
           // Merge PostgreSQL models into our cloud cache map
           const map = new Map<string, Model>();
-          this.data.models.forEach((m) => {
+          this.sanitizeModels(this.data.models).forEach((m) => {
             if (m.status !== 'deleted' && !deletedIds.includes(m.id)) {
               map.set(m.id, m);
             }
           });
-          pgModels.forEach((m: Model) => map.set(m.id, m));
+          this.sanitizeModels(pgModels).forEach((m: Model) => map.set(m.id, m));
 
           let models = Array.from(map.values());
 
@@ -425,7 +442,7 @@ class DatabaseManager {
     }
 
     // Cloud Storage / Local Fallback (Guaranteed to retain user uploads & deletions)
-    let result = [...this.data.models].filter(
+    let result = this.sanitizeModels(this.data.models).filter(
       (m) => m.status !== 'deleted' && !deletedIds.includes(m.id)
     );
     if (params?.subject) result = result.filter((m) => m.subject === params.subject);
