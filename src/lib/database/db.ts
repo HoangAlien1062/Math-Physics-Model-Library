@@ -161,7 +161,7 @@ class DatabaseManager {
   async syncFromCloudStorage(): Promise<void> {
     if (this.cloudSynced) return;
 
-    // 1. Fast Layer: Supabase Storage (Global CDN - takes ~50ms, super smooth & fast)
+    // 1. Supabase Storage: Download metadata/db.json
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
@@ -174,9 +174,6 @@ class DatabaseManager {
           const text = await data.text();
           const parsed = JSON.parse(text);
           if (parsed && typeof parsed === 'object') {
-            if (Array.isArray(parsed.models)) {
-              this.data.models = this.sanitizeModels(parsed.models);
-            }
             if (Array.isArray(parsed.deletedIds)) {
               this.data.deletedIds = parsed.deletedIds;
             }
@@ -186,49 +183,46 @@ class DatabaseManager {
             if (Array.isArray(parsed.recentViews)) {
               this.data.recentViews = parsed.recentViews.filter((r: any) => !r.modelId?.startsWith('demo-'));
             }
-            this.saveLocalData(this.data, false);
-            this.cloudSynced = true;
-            return;
+            if (Array.isArray(parsed.models) && parsed.models.length > 0) {
+              this.data.models = this.sanitizeModels(parsed.models);
+              this.saveLocalData(this.data, false);
+              this.cloudSynced = true;
+              return;
+            }
           }
         }
       } catch (e) {
-        // Fallback to Google Drive if Supabase cache miss
+        // Fallback to Google Drive scan if Supabase Storage is empty
       }
     }
 
-    // 2. Master Backup Layer: Google Drive (Permanent source of truth)
+    // 2. Google Drive: Master Persistent Source of Truth & File Recovery
     try {
       const storage = getStorageProvider();
       if (storage instanceof GoogleDriveStorageProvider && storage.isConfigured()) {
-        const driveJson = await withTimeout(storage.getDbJson(), 4000);
+        const driveJson = await withTimeout(storage.getDbJson(), 3000);
         if (driveJson) {
           const parsed = JSON.parse(driveJson);
           if (parsed && typeof parsed === 'object') {
-            if (Array.isArray(parsed.models)) {
-              this.data.models = this.sanitizeModels(parsed.models);
-            }
             if (Array.isArray(parsed.deletedIds)) {
               this.data.deletedIds = parsed.deletedIds;
             }
-            if (Array.isArray(parsed.favorites)) {
-              this.data.favorites = parsed.favorites.filter((fid: string) => !fid.startsWith('demo-'));
+            if (Array.isArray(parsed.models) && parsed.models.length > 0) {
+              this.data.models = this.sanitizeModels(parsed.models);
+              this.saveLocalData(this.data, false);
+              this.cloudSynced = true;
+              return;
             }
-            if (Array.isArray(parsed.recentViews)) {
-              this.data.recentViews = parsed.recentViews.filter((r: any) => !r.modelId?.startsWith('demo-'));
-            }
-            this.saveLocalData(this.data, false);
-            this.cloudSynced = true;
-            return;
           }
-        } else {
-          // If no db.json yet, scan Google Drive Math and Physics folders for user uploaded files
-          const driveModels = await withTimeout(storage.scanDriveModels(), 5000);
-          if (driveModels && driveModels.length > 0) {
-            this.data.models = this.sanitizeModels(driveModels);
-            this.saveLocalData(this.data, true);
-            this.cloudSynced = true;
-            return;
-          }
+        }
+
+        // If no db.json yet or 0 models, SCAN Google Drive Math and Physics folders for user uploaded files!
+        const driveModels = await withTimeout(storage.scanDriveModels(), 6000);
+        if (driveModels && driveModels.length > 0) {
+          this.data.models = this.sanitizeModels(driveModels);
+          this.saveLocalData(this.data, true);
+          this.cloudSynced = true;
+          return;
         }
       }
     } catch (driveErr) {
@@ -375,13 +369,81 @@ class DatabaseManager {
     tag?: string;
     sort?: 'newest' | 'name-asc' | 'name-desc' | 'updated';
   }): Promise<Model[]> {
-    await this.syncFromCloudStorage();
+    const supabase = getSupabaseClient();
     const deletedIds = this.data.deletedIds || [];
 
-    // Master Cloud Storage Cache (Guaranteed consistent across all Vercel instances)
+    // 1. Primary Source of Truth: Supabase PostgreSQL Database Table
+    if (supabase) {
+      try {
+        let query = supabase.from('models').select('*').neq('status', 'deleted');
+        if (params?.subject) query = query.eq('subject', params.subject);
+        if (params?.category && params.category !== 'all') query = query.eq('category', params.category);
+
+        const sort = params?.sort || 'updated';
+        if (sort === 'name-asc') query = query.order('title', { ascending: true });
+        else if (sort === 'name-desc') query = query.order('title', { ascending: false });
+        else if (sort === 'newest') query = query.order('created_at', { ascending: false });
+        else query = query.order('updated_at', { ascending: false });
+
+        const { data, error } = await withTimeout(query, 2500);
+        if (!error && Array.isArray(data) && data.length > 0) {
+          let models = this.sanitizeModels(data.map(mapDbRowToModel)).filter(
+            (m) => !deletedIds.includes(m.id) && !deletedIds.includes(m.slug)
+          );
+
+          if (params?.tag) models = models.filter((m) => m.tags.includes(params.tag!));
+          if (params?.search) {
+            const q = params.search.toLowerCase().trim();
+            models = models.filter(
+              (m: Model) =>
+                m.title.toLowerCase().includes(q) ||
+                m.description.toLowerCase().includes(q) ||
+                m.tags.some((t: string) => t.toLowerCase().includes(q)) ||
+                m.category.toLowerCase().includes(q)
+            );
+          }
+          this.data.models = models;
+          return models;
+        }
+      } catch (err) {
+        console.warn('[DB] Supabase getModels query note:', err);
+      }
+    }
+
+    // 2. Fallback & Auto-Recovery: If Supabase table is empty or cold start, sync from Cloud Storage & Google Drive
+    await this.syncFromCloudStorage();
+    const activeDeletedIds = this.data.deletedIds || [];
+
     let result = this.sanitizeModels(this.data.models).filter(
-      (m) => m.status !== 'deleted' && !deletedIds.includes(m.id) && !deletedIds.includes(m.slug)
+      (m) => m.status !== 'deleted' && !activeDeletedIds.includes(m.id) && !activeDeletedIds.includes(m.slug)
     );
+
+    // If models were recovered from Google Drive and Supabase DB table exists, auto-sync them into Supabase DB table!
+    if (supabase && result.length > 0) {
+      for (const m of result) {
+        supabase.from('models').upsert({
+          id: m.id,
+          title: m.title,
+          slug: m.slug,
+          description: m.description,
+          subject: m.subject,
+          category: m.category,
+          thumbnail_url: m.thumbnailUrl,
+          drive_file_id: m.driveFileId,
+          drive_folder_id: m.driveFolderId,
+          cache_path: m.cachePath,
+          entry_file: m.entryFile,
+          file_type: m.fileType,
+          file_size: m.fileSize,
+          version: m.version,
+          status: m.status,
+          tags: m.tags,
+          featured: m.featured,
+          created_at: m.createdAt,
+          updated_at: m.updatedAt,
+        }).then(() => {});
+      }
+    }
 
     if (params?.subject) result = result.filter((m) => m.subject === params.subject);
     if (params?.category && params.category !== 'all') result = result.filter((m) => m.category === params.category);
@@ -459,18 +521,18 @@ class DatabaseManager {
       updatedAt: new Date().toISOString(),
     };
 
-    // 1. Immediately store in local memory and persist to Supabase Storage metadata/db.json
+    // 1. Immediately store in local memory
     this.data.models.unshift(newModel);
-    this.saveLocalData(this.data, true);
+    this.saveLocalData(this.data, false);
 
-    // 2. Also try inserting into Supabase PostgreSQL if table exists
+    // 2. Insert into Supabase PostgreSQL Table & AWAIT IT
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
         await withTimeout(
           supabase
             .from('models')
-            .insert({
+            .upsert({
               id: newModel.id,
               title: newModel.title,
               slug: newModel.slug,
@@ -489,13 +551,18 @@ class DatabaseManager {
               tags: newModel.tags,
               featured: newModel.featured,
               last_accessed_at: new Date().toISOString(),
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
             }),
           3000
         );
       } catch (e) {
-        console.warn('[DB] Supabase PG insert notice (saved to Supabase Storage):', e);
+        console.warn('[DB] Supabase PG insert notice:', e);
       }
     }
+
+    // 3. Persist to Supabase Storage metadata/db.json & AWAIT IT
+    await this.saveToCloudStorage(this.data);
 
     return newModel;
   }
@@ -510,7 +577,7 @@ class DatabaseManager {
         ...updates,
         updatedAt: new Date().toISOString(),
       };
-      this.saveLocalData(this.data, true);
+      this.saveLocalData(this.data, false);
     }
 
     const supabase = getSupabaseClient();
@@ -528,11 +595,13 @@ class DatabaseManager {
           supabase
             .from('models')
             .update(dbUpdates)
-            .eq('id', id),
+            .or(`id.eq.${id},slug.eq.${id}`),
           2000
         );
       } catch (e) {}
     }
+
+    await this.saveToCloudStorage(this.data);
 
     return idx !== -1 ? this.data.models[idx] : null;
   }
@@ -547,11 +616,11 @@ class DatabaseManager {
       this.data.deletedIds.push(id);
     }
 
-    // 1. Remove from in-memory arrays and immediately upload to Supabase Storage metadata/db.json & Google Drive
+    // 1. Remove from in-memory arrays
     this.data.models = this.data.models.filter((m) => m.id !== id && m.slug !== id);
     this.data.favorites = this.data.favorites.filter((fid) => fid !== id);
     this.data.recentViews = this.data.recentViews.filter((r) => r.modelId !== id);
-    this.saveLocalData(this.data, true);
+    this.saveLocalData(this.data, false);
 
     // 2. Hard delete from Supabase PostgreSQL tables so it can never resurrect
     const supabase = getSupabaseClient();
@@ -567,6 +636,9 @@ class DatabaseManager {
         console.warn('[DB] Supabase deleteModel error:', e);
       }
     }
+
+    // 3. Persist deletion to Supabase Storage metadata/db.json & AWAIT IT
+    await this.saveToCloudStorage(this.data);
 
     return true;
   }
