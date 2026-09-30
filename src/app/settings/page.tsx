@@ -64,7 +64,6 @@ export default function SettingsPage() {
     }
   };
 
-  const isBlob = storageStatus?.provider === 'vercel_blob';
   const isDrive = storageStatus?.provider === 'google_drive';
 
   return (
@@ -74,7 +73,7 @@ export default function SettingsPage() {
       <div className="border-b border-slate-200 pb-5">
         <h1 className="text-2xl font-black text-slate-900 tracking-tight">Cài đặt & Hệ thống lưu trữ</h1>
         <p className="text-xs sm:text-sm text-slate-500 mt-0.5">
-          Quản lý kết nối lưu trữ đám mây và số liệu thư viện cá nhân
+          Quản lý kết nối lưu trữ Google Drive (Kho gốc) và bộ đệm Supabase (Tốc độ cao)
         </p>
       </div>
 
@@ -89,18 +88,12 @@ export default function SettingsPage() {
               </div>
               <div>
                 <h2 className="text-base font-bold text-slate-900">
-                  {isBlob
-                    ? 'Vercel Blob Cloud Storage'
-                    : isDrive
-                    ? 'Google Drive Cloud Storage'
-                    : 'Lưu trữ cục bộ (Local Storage)'}
+                  {isDrive ? 'Google Drive Master Storage' : 'Lưu trữ cục bộ / Sẵn sàng đồng bộ'}
                 </h2>
                 <p className="text-xs text-slate-500">
-                  {isBlob
-                    ? 'Đang kết nối tự động với Vercel Blob Store (1-Click Storage)'
-                    : isDrive
-                    ? `Đang kết nối: ${storageStatus?.adminEmail || 'Tài khoản Google Drive'}`
-                    : 'Đang chạy lưu trữ trên máy chủ / Fallback'}
+                  {isDrive
+                    ? `Kho gốc vĩnh viễn: ${storageStatus?.adminEmail || 'Tài khoản Google Drive'}`
+                    : 'Đang chạy lưu trữ máy chủ / Fallback'}
                 </p>
               </div>
             </div>
@@ -124,13 +117,15 @@ export default function SettingsPage() {
               </span>
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-slate-500 font-medium">Cơ chế lưu trữ</span>
+              <span className="text-slate-500 font-medium">Kho lưu trữ gốc (Master)</span>
               <span className="font-semibold text-slate-800">
-                {isBlob
-                  ? 'Vercel Blob Storage (Đám mây tốc độ cao)'
-                  : isDrive
-                  ? 'Đám mây Google Drive (Vĩnh viễn)'
-                  : 'Thư mục cục bộ / Tạm thời'}
+                {isDrive ? 'Đám mây Google Drive (Vĩnh viễn)' : 'Thư mục cục bộ / Tạm thời'}
+              </span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-slate-500 font-medium">Bộ đệm & Cơ sở dữ liệu</span>
+              <span className="font-semibold text-blue-600">
+                Supabase Storage (Cache) & PostgreSQL Database
               </span>
             </div>
             {storageStatus?.rootFolderId && (

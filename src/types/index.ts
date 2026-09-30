@@ -22,6 +22,7 @@ export interface Model {
   thumbnailUrl?: string;
   driveFileId: string;
   driveFolderId?: string;
+  cachePath?: string;
   entryFile: string;
   fileType: ModelFileType;
   fileSize?: number;
@@ -46,7 +47,8 @@ export interface RecentView {
 }
 
 export interface StorageStatus {
-  provider: 'vercel_blob' | 'google_drive' | 'local_fallback';
+  provider: 'google_drive' | 'local_fallback';
+  cacheActive?: boolean;
   connected: boolean;
   adminEmail?: string;
   rootFolderId?: string;

@@ -115,23 +115,17 @@ export function Navbar({ onOpenUpload }: NavbarProps) {
             <Link
               href="/settings"
               title={
-                storageStatus?.provider === 'vercel_blob'
-                  ? 'Vercel Blob Storage: Đã kết nối tự động'
-                  : storageStatus?.provider === 'google_drive'
-                  ? `Google Drive: Đã kết nối (${storageStatus.adminEmail || 'Google Drive'})`
-                  : 'Lưu trữ cục bộ / Sẵn sàng kết nối'
+                storageStatus?.provider === 'google_drive'
+                  ? `Google Drive: Đã kết nối (${storageStatus.adminEmail || 'Tài khoản Drive'}) • Supabase Cache: Kích hoạt`
+                  : 'Lưu trữ cục bộ / Sẵn sàng kết nối Google Drive & Supabase'
               }
               className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100 transition-colors"
             >
               <HardDrive className="w-3.5 h-3.5 text-blue-600" />
-              <span>Lưu trữ:</span>
+              <span>Drive:</span>
               <span className="flex items-center gap-1 text-emerald-600 font-semibold">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                {storageStatus?.provider === 'vercel_blob'
-                  ? 'Vercel Blob'
-                  : storageStatus?.provider === 'google_drive'
-                  ? 'Drive'
-                  : 'Sẵn sàng'}
+                {storageStatus?.provider === 'google_drive' ? 'Connected' : 'Sẵn sàng'}
               </span>
             </Link>
 

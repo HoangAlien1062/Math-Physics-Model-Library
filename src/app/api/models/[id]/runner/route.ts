@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/database/db';
 import { getStorageProvider } from '@/lib/storage';
+import { cacheManager } from '@/lib/storage/cache-manager';
 import JSZip from 'jszip';
 import fs from 'fs';
 import path from 'path';
@@ -38,9 +39,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       }
     }
 
-    // 2. Fetch model file from Google Drive Storage or fallback provider
-    const storage = getStorageProvider();
-    const stored = await storage.getModelFile(model.driveFileId);
+    // 2. Fetch model file from fast Supabase Cache, or fallback to Google Drive
+    const stored = await cacheManager.getFile(model.cachePath, model.driveFileId);
 
     if (!stored) {
       return new NextResponse('<h1>404 - File mô hình không tìm thấy trên hệ thống lưu trữ</h1>', {

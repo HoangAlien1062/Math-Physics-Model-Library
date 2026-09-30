@@ -3,6 +3,7 @@ import { getStorageProvider } from '@/lib/storage';
 import { db } from '@/lib/database/db';
 import { sanitizeRelativePath, isValidEntryFile, MAX_UPLOAD_SIZE, MAX_UNCOMPRESSED_RATIO } from '@/lib/security/sanitize';
 import { ModelManifest, Subject } from '@/types';
+import { cacheManager } from '@/lib/storage/cache-manager';
 import JSZip from 'jszip';
 
 export async function POST(req: NextRequest) {
@@ -135,7 +136,7 @@ export async function POST(req: NextRequest) {
 
     const modelId = `model-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
 
-    // 3. Upload to Google Drive Storage / Local fallback
+    // 3. Upload to Master Google Drive Storage
     const storage = getStorageProvider();
     const uploadResult = await storage.uploadModel({
       modelId,
@@ -145,7 +146,22 @@ export async function POST(req: NextRequest) {
       mimeType: isZip ? 'application/zip' : 'text/html',
     });
 
-    // 4. Save metadata in database
+    // 4. Cache to fast Supabase Storage layer
+    const cleanFileName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const cachePath = `${finalSubject}/${modelId}-${cleanFileName}`;
+    let savedCachePath: string | undefined = undefined;
+    try {
+      const cached = await cacheManager.putFile(
+        cachePath,
+        buffer,
+        isZip ? 'application/zip' : 'text/html'
+      );
+      if (cached) savedCachePath = cachePath;
+    } catch (cacheErr) {
+      console.warn('Supabase cache put note:', cacheErr);
+    }
+
+    // 5. Save metadata in persistent database
     const modelRecord = await db.createModel({
       title: finalTitle,
       slug: finalTitle.toLowerCase().replace(/[^a-z0-9]/g, '-').slice(0, 50),
@@ -154,6 +170,7 @@ export async function POST(req: NextRequest) {
       category: finalCategory,
       driveFileId: uploadResult.driveFileId,
       driveFolderId: uploadResult.driveFolderId,
+      cachePath: savedCachePath,
       entryFile: detectedEntryFile,
       fileType: detectedFileType,
       fileSize: uploadResult.fileSize,
@@ -164,11 +181,12 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      message: 'Tải lên mô hình thành công vào hệ thống lưu trữ!',
+      message: 'Tải lên mô hình thành công vào Google Drive và bộ đệm Supabase!',
       model: modelRecord,
       storage: {
         provider: uploadResult.provider,
         driveFileId: uploadResult.driveFileId,
+        cached: !!savedCachePath,
       },
     });
   } catch (error: any) {

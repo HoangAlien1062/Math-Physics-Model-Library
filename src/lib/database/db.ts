@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { Category, Favorite, Model, RecentView, Subject } from '@/types';
-import { put, list } from '@vercel/blob';
+import { getSupabaseClient } from '@/lib/supabase/client';
 
 // Seeded categories for Math and Physics
 export const DEFAULT_CATEGORIES: Category[] = [
@@ -92,11 +92,33 @@ interface DataStore {
   recentViews: RecentView[];
 }
 
+function mapDbRowToModel(row: any): Model {
+  return {
+    id: row.id,
+    title: row.title,
+    slug: row.slug,
+    description: row.description || '',
+    subject: row.subject,
+    category: row.category,
+    thumbnailUrl: row.thumbnail_url,
+    driveFileId: row.drive_file_id,
+    driveFolderId: row.drive_folder_id,
+    cachePath: row.cache_path,
+    entryFile: row.entry_file || 'index.html',
+    fileType: row.file_type || 'html',
+    fileSize: row.file_size,
+    version: row.version || '1.0.0',
+    status: row.status || 'ready',
+    tags: Array.isArray(row.tags) ? row.tags : [],
+    featured: row.featured,
+    createdAt: row.created_at || new Date().toISOString(),
+    updatedAt: row.updated_at || new Date().toISOString(),
+  };
+}
+
 class DatabaseManager {
   private dataFilePath: string;
   private data: DataStore;
-  private lastCloudSync: number = 0;
-  private isSyncing: boolean = false;
 
   constructor() {
     let dataDir: string;
@@ -123,10 +145,10 @@ class DatabaseManager {
     }
 
     this.dataFilePath = path.join(dataDir, 'db.json');
-    this.data = this.loadData();
+    this.data = this.loadLocalData();
   }
 
-  private loadData(): DataStore {
+  private loadLocalData(): DataStore {
     if (fs.existsSync(this.dataFilePath)) {
       try {
         const raw = fs.readFileSync(this.dataFilePath, 'utf-8');
@@ -142,7 +164,7 @@ class DatabaseManager {
       }
     }
 
-    const initial: DataStore = {
+    return {
       categories: DEFAULT_CATEGORIES,
       models: DEFAULT_MODELS,
       favorites: ['demo-phys-pendulum'],
@@ -151,67 +173,39 @@ class DatabaseManager {
         { id: 'rec-2', modelId: 'demo-phys-pendulum', lastOpenedAt: '2026-03-30T11:30:00Z' },
       ],
     };
-    return initial;
   }
 
-  private async syncFromCloud(): Promise<void> {
-    // Cache for 3 seconds to avoid unnecessary requests on multiple simultaneous queries
-    if (Date.now() - this.lastCloudSync < 3000) return;
-    if (this.isSyncing) return;
-
-    if (process.env.BLOB_READ_WRITE_TOKEN) {
-      this.isSyncing = true;
-      try {
-        const { blobs } = await list({ prefix: 'metadata/db.json' });
-        if (blobs.length > 0) {
-          const res = await fetch(blobs[0].url, { cache: 'no-store' });
-          if (res.ok) {
-            const parsed = await res.json();
-            if (parsed && Array.isArray(parsed.models)) {
-              this.data = {
-                categories: parsed.categories?.length ? parsed.categories : DEFAULT_CATEGORIES,
-                models: parsed.models,
-                favorites: Array.isArray(parsed.favorites) ? parsed.favorites : [],
-                recentViews: Array.isArray(parsed.recentViews) ? parsed.recentViews : [],
-              };
-              this.lastCloudSync = Date.now();
-            }
-          }
-        }
-      } catch (err) {
-        console.warn('[DB] Vercel Blob sync note:', err);
-      } finally {
-        this.isSyncing = false;
-      }
-    }
-  }
-
-  private async saveData(data: DataStore): Promise<void> {
-    // 1. Local filesystem
+  private saveLocalData(data: DataStore) {
     try {
       fs.writeFileSync(this.dataFilePath, JSON.stringify(data, null, 2), 'utf-8');
     } catch (err) {
       console.warn('Filesystem save note:', err);
     }
-
-    // 2. Vercel Blob Cloud Persistence
-    if (process.env.BLOB_READ_WRITE_TOKEN) {
-      try {
-        await put('metadata/db.json', JSON.stringify(data, null, 2), {
-          access: 'public',
-          addRandomSuffix: false,
-          contentType: 'application/json',
-        });
-        this.lastCloudSync = Date.now();
-      } catch (blobErr) {
-        console.error('[DB] Failed to save metadata to Vercel Blob:', blobErr);
-      }
-    }
   }
 
   // Categories
   async getCategories(subject?: Subject): Promise<Category[]> {
-    await this.syncFromCloud();
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        let q = supabase.from('categories').select('*').order('order_index', { ascending: true });
+        if (subject) q = q.eq('subject', subject);
+        const { data, error } = await q;
+        if (!error && data && data.length > 0) {
+          return data.map((c: any) => ({
+            id: c.id,
+            subject: c.subject,
+            slug: c.slug,
+            name: c.name,
+            icon: c.icon,
+            orderIndex: c.order_index,
+          }));
+        }
+      } catch (e) {
+        console.warn('[DB] Supabase getCategories error, using default:', e);
+      }
+    }
+
     if (subject) {
       return this.data.categories
         .filter((c) => c.subject === subject)
@@ -221,13 +215,29 @@ class DatabaseManager {
   }
 
   async addCategory(cat: Omit<Category, 'id'>): Promise<Category> {
-    await this.syncFromCloud();
     const newCat: Category = {
       ...cat,
       id: `cat-${Date.now()}`,
     };
+
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        await supabase.from('categories').insert({
+          id: newCat.id,
+          subject: newCat.subject,
+          slug: newCat.slug,
+          name: newCat.name,
+          icon: newCat.icon,
+          order_index: newCat.orderIndex,
+        });
+      } catch (e) {
+        console.warn('[DB] Supabase addCategory error:', e);
+      }
+    }
+
     this.data.categories.push(newCat);
-    await this.saveData(this.data);
+    this.saveLocalData(this.data);
     return newCat;
   }
 
@@ -239,21 +249,63 @@ class DatabaseManager {
     tag?: string;
     sort?: 'newest' | 'name-asc' | 'name-desc' | 'updated';
   }): Promise<Model[]> {
-    await this.syncFromCloud();
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        let query = supabase.from('models').select('*').neq('status', 'deleted');
+
+        if (params?.subject) {
+          query = query.eq('subject', params.subject);
+        }
+        if (params?.category && params.category !== 'all') {
+          query = query.eq('category', params.category);
+        }
+
+        const sort = params?.sort || 'updated';
+        if (sort === 'name-asc') query = query.order('title', { ascending: true });
+        else if (sort === 'name-desc') query = query.order('title', { ascending: false });
+        else if (sort === 'newest') query = query.order('created_at', { ascending: false });
+        else query = query.order('updated_at', { ascending: false });
+
+        const { data, error } = await query;
+        if (!error && data) {
+          let models = data.map(mapDbRowToModel);
+
+          // Handle client-side search & tag filter for Vietnamese fuzzy match
+          if (params?.tag) {
+            models = models.filter((m) => m.tags.includes(params.tag!));
+          }
+          if (params?.search) {
+            const q = params.search.toLowerCase().trim();
+            models = models.filter(
+              (m) =>
+                m.title.toLowerCase().includes(q) ||
+                m.description.toLowerCase().includes(q) ||
+                m.tags.some((t) => t.toLowerCase().includes(q)) ||
+                m.category.toLowerCase().includes(q)
+            );
+          }
+
+          // If database is empty, seed defaults
+          if (models.length === 0 && !params?.search && !params?.tag && !params?.category) {
+            for (const d of DEFAULT_MODELS) {
+              await this.createModel(d);
+            }
+            return DEFAULT_MODELS;
+          }
+
+          return models;
+        }
+      } catch (e) {
+        console.warn('[DB] Supabase getModels error, fallback to local:', e);
+      }
+    }
+
+    // Local fallback
     let result = [...this.data.models].filter((m) => m.status !== 'deleted');
-
-    if (params?.subject) {
-      result = result.filter((m) => m.subject === params.subject);
-    }
-
-    if (params?.category && params.category !== 'all') {
-      result = result.filter((m) => m.category === params.category);
-    }
-
-    if (params?.tag) {
-      result = result.filter((m) => m.tags.includes(params.tag!));
-    }
-
+    if (params?.subject) result = result.filter((m) => m.subject === params.subject);
+    if (params?.category && params.category !== 'all') result = result.filter((m) => m.category === params.category);
+    if (params?.tag) result = result.filter((m) => m.tags.includes(params.tag!));
     if (params?.search) {
       const q = params.search.toLowerCase().trim();
       result = result.filter(
@@ -264,7 +316,6 @@ class DatabaseManager {
           m.category.toLowerCase().includes(q)
       );
     }
-
     const sort = params?.sort || 'updated';
     result.sort((a, b) => {
       if (sort === 'name-asc') return a.title.localeCompare(b.title, 'vi');
@@ -272,31 +323,118 @@ class DatabaseManager {
       if (sort === 'newest') return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
       return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
     });
-
     return result;
   }
 
   async getModelById(id: string): Promise<Model | null> {
-    await this.syncFromCloud();
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('models')
+          .select('*')
+          .or(`id.eq.${id},slug.eq.${id}`)
+          .neq('status', 'deleted')
+          .maybeSingle();
+
+        if (!error && data) {
+          // Update last accessed timestamp
+          supabase
+            .from('models')
+            .update({ last_accessed_at: new Date().toISOString() })
+            .eq('id', data.id)
+            .then(() => {});
+
+          return mapDbRowToModel(data);
+        }
+      } catch (e) {
+        console.warn('[DB] Supabase getModelById error:', e);
+      }
+    }
+
     const found = this.data.models.find((m) => (m.id === id || m.slug === id) && m.status !== 'deleted');
     return found || null;
   }
 
   async createModel(model: Omit<Model, 'id' | 'createdAt' | 'updatedAt'>): Promise<Model> {
-    await this.syncFromCloud();
     const newModel: Model = {
       ...model,
       id: `model-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
+
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('models')
+          .insert({
+            id: newModel.id,
+            title: newModel.title,
+            slug: newModel.slug,
+            description: newModel.description,
+            subject: newModel.subject,
+            category: newModel.category,
+            thumbnail_url: newModel.thumbnailUrl,
+            drive_file_id: newModel.driveFileId,
+            drive_folder_id: newModel.driveFolderId,
+            cache_path: newModel.cachePath,
+            entry_file: newModel.entryFile,
+            file_type: newModel.fileType,
+            file_size: newModel.fileSize,
+            version: newModel.version,
+            status: newModel.status,
+            tags: newModel.tags,
+            featured: newModel.featured,
+            last_accessed_at: new Date().toISOString(),
+          })
+          .select()
+          .single();
+
+        if (!error && data) {
+          return mapDbRowToModel(data);
+        }
+        if (error) {
+          console.warn('[DB] Supabase insert warning:', error);
+        }
+      } catch (e) {
+        console.warn('[DB] Supabase createModel error:', e);
+      }
+    }
+
     this.data.models.unshift(newModel);
-    await this.saveData(this.data);
+    this.saveLocalData(this.data);
     return newModel;
   }
 
   async updateModel(id: string, updates: Partial<Model>): Promise<Model | null> {
-    await this.syncFromCloud();
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        const dbUpdates: any = { updated_at: new Date().toISOString() };
+        if (updates.title) dbUpdates.title = updates.title;
+        if (updates.description !== undefined) dbUpdates.description = updates.description;
+        if (updates.category) dbUpdates.category = updates.category;
+        if (updates.tags) dbUpdates.tags = updates.tags;
+        if (updates.version) dbUpdates.version = updates.version;
+        if (updates.cachePath) dbUpdates.cache_path = updates.cachePath;
+
+        const { data, error } = await supabase
+          .from('models')
+          .update(dbUpdates)
+          .eq('id', id)
+          .select()
+          .single();
+
+        if (!error && data) {
+          return mapDbRowToModel(data);
+        }
+      } catch (e) {
+        console.warn('[DB] Supabase updateModel error:', e);
+      }
+    }
+
     const idx = this.data.models.findIndex((m) => m.id === id);
     if (idx === -1) return null;
 
@@ -305,50 +443,120 @@ class DatabaseManager {
       ...updates,
       updatedAt: new Date().toISOString(),
     };
-    await this.saveData(this.data);
+    this.saveLocalData(this.data);
     return this.data.models[idx];
   }
 
   async deleteModel(id: string): Promise<boolean> {
-    await this.syncFromCloud();
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        await supabase.from('models').update({ status: 'deleted' }).eq('id', id);
+      } catch (e) {
+        console.warn('[DB] Supabase deleteModel error:', e);
+      }
+    }
+
     const idx = this.data.models.findIndex((m) => m.id === id);
-    if (idx === -1) return false;
-    this.data.models[idx].status = 'deleted';
-    await this.saveData(this.data);
+    if (idx !== -1) {
+      this.data.models[idx].status = 'deleted';
+      this.saveLocalData(this.data);
+    }
     return true;
   }
 
   // Favorites
   async getFavorites(): Promise<string[]> {
-    await this.syncFromCloud();
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        const { data, error } = await supabase.from('favorites').select('model_id');
+        if (!error && data) {
+          return data.map((f: any) => f.model_id);
+        }
+      } catch (e) {
+        console.warn('[DB] Supabase getFavorites error:', e);
+      }
+    }
     return [...this.data.favorites];
   }
 
   async toggleFavorite(modelId: string): Promise<boolean> {
-    await this.syncFromCloud();
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        const { data } = await supabase.from('favorites').select('id').eq('model_id', modelId).maybeSingle();
+        if (data) {
+          await supabase.from('favorites').delete().eq('model_id', modelId);
+          return false;
+        } else {
+          await supabase.from('favorites').insert({ id: `fav-${Date.now()}`, model_id: modelId });
+          return true;
+        }
+      } catch (e) {
+        console.warn('[DB] Supabase toggleFavorite error:', e);
+      }
+    }
+
     const idx = this.data.favorites.indexOf(modelId);
-    let isFav = false;
     if (idx >= 0) {
       this.data.favorites.splice(idx, 1);
-      isFav = false;
+      this.saveLocalData(this.data);
+      return false;
     } else {
       this.data.favorites.push(modelId);
-      isFav = true;
+      this.saveLocalData(this.data);
+      return true;
     }
-    await this.saveData(this.data);
-    return isFav;
   }
 
   // Recent Views
   async getRecentViews(limit: number = 20): Promise<RecentView[]> {
-    await this.syncFromCloud();
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('recent_views')
+          .select('*')
+          .order('last_opened_at', { ascending: false })
+          .limit(limit);
+
+        if (!error && data) {
+          return data.map((r: any) => ({
+            id: r.id,
+            modelId: r.model_id,
+            lastOpenedAt: r.last_opened_at,
+          }));
+        }
+      } catch (e) {
+        console.warn('[DB] Supabase getRecentViews error:', e);
+      }
+    }
+
     return this.data.recentViews
       .sort((a, b) => new Date(b.lastOpenedAt).getTime() - new Date(a.lastOpenedAt).getTime())
       .slice(0, limit);
   }
 
   async recordRecentView(modelId: string): Promise<void> {
-    await this.syncFromCloud();
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        const { data } = await supabase.from('recent_views').select('id').eq('model_id', modelId).maybeSingle();
+        if (data) {
+          await supabase.from('recent_views').update({ last_opened_at: new Date().toISOString() }).eq('model_id', modelId);
+        } else {
+          await supabase.from('recent_views').insert({
+            id: `rec-${Date.now()}`,
+            model_id: modelId,
+            last_opened_at: new Date().toISOString(),
+          });
+        }
+      } catch (e) {
+        console.warn('[DB] Supabase recordRecentView error:', e);
+      }
+    }
+
     const idx = this.data.recentViews.findIndex((r) => r.modelId === modelId);
     if (idx >= 0) {
       this.data.recentViews[idx].lastOpenedAt = new Date().toISOString();
@@ -360,7 +568,7 @@ class DatabaseManager {
       });
     }
     this.data.recentViews = this.data.recentViews.slice(0, 50);
-    await this.saveData(this.data);
+    this.saveLocalData(this.data);
   }
 }
 
