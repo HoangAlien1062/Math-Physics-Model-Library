@@ -46,7 +46,7 @@ export interface RecentView {
 }
 
 export interface StorageStatus {
-  provider: 'google_drive' | 'local_fallback';
+  provider: 'vercel_blob' | 'google_drive' | 'local_fallback';
   connected: boolean;
   adminEmail?: string;
   rootFolderId?: string;

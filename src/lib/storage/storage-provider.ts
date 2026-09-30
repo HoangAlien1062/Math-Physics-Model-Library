@@ -24,7 +24,7 @@ export interface UploadResult {
   driveFolderId?: string;
   fileName: string;
   fileSize: number;
-  provider: 'google_drive' | 'local_fallback';
+  provider: 'vercel_blob' | 'google_drive' | 'local_fallback';
 }
 
 export interface StorageProvider {

@@ -64,6 +64,7 @@ export default function SettingsPage() {
     }
   };
 
+  const isBlob = storageStatus?.provider === 'vercel_blob';
   const isDrive = storageStatus?.provider === 'google_drive';
 
   return (
@@ -73,7 +74,7 @@ export default function SettingsPage() {
       <div className="border-b border-slate-200 pb-5">
         <h1 className="text-2xl font-black text-slate-900 tracking-tight">Cài đặt & Hệ thống lưu trữ</h1>
         <p className="text-xs sm:text-sm text-slate-500 mt-0.5">
-          Quản lý kết nối lưu trữ đám mây Google Drive và số liệu thư viện cá nhân
+          Quản lý kết nối lưu trữ đám mây và số liệu thư viện cá nhân
         </p>
       </div>
 
@@ -88,10 +89,16 @@ export default function SettingsPage() {
               </div>
               <div>
                 <h2 className="text-base font-bold text-slate-900">
-                  {isDrive ? 'Google Drive Cloud Storage' : 'Lưu trữ cục bộ (Local Storage)'}
+                  {isBlob
+                    ? 'Vercel Blob Cloud Storage'
+                    : isDrive
+                    ? 'Google Drive Cloud Storage'
+                    : 'Lưu trữ cục bộ (Local Storage)'}
                 </h2>
                 <p className="text-xs text-slate-500">
-                  {isDrive
+                  {isBlob
+                    ? 'Đang kết nối tự động với Vercel Blob Store (1-Click Storage)'
+                    : isDrive
                     ? `Đang kết nối: ${storageStatus?.adminEmail || 'Tài khoản Google Drive'}`
                     : 'Đang chạy lưu trữ trên máy chủ / Fallback'}
                 </p>
@@ -119,7 +126,11 @@ export default function SettingsPage() {
             <div className="flex items-center justify-between">
               <span className="text-slate-500 font-medium">Cơ chế lưu trữ</span>
               <span className="font-semibold text-slate-800">
-                {isDrive ? 'Đám mây Google Drive (Vĩnh viễn)' : 'Thư mục cục bộ / Tạm thời'}
+                {isBlob
+                  ? 'Vercel Blob Storage (Đám mây tốc độ cao)'
+                  : isDrive
+                  ? 'Đám mây Google Drive (Vĩnh viễn)'
+                  : 'Thư mục cục bộ / Tạm thời'}
               </span>
             </div>
             {storageStatus?.rootFolderId && (
