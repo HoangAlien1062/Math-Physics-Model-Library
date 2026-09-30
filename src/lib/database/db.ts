@@ -376,75 +376,13 @@ class DatabaseManager {
     sort?: 'newest' | 'name-asc' | 'name-desc' | 'updated';
   }): Promise<Model[]> {
     await this.syncFromCloudStorage();
-    const deletedIds = await this.getDeletedModelIds();
-    const supabase = getSupabaseClient();
+    const deletedIds = this.data.deletedIds || [];
 
-    if (supabase) {
-      try {
-        let query = supabase.from('models').select('*').neq('status', 'deleted');
-
-        if (params?.subject) {
-          query = query.eq('subject', params.subject);
-        }
-        if (params?.category && params.category !== 'all') {
-          query = query.eq('category', params.category);
-        }
-
-        const sort = params?.sort || 'updated';
-        if (sort === 'name-asc') query = query.order('title', { ascending: true });
-        else if (sort === 'name-desc') query = query.order('title', { ascending: false });
-        else if (sort === 'newest') query = query.order('created_at', { ascending: false });
-        else query = query.order('updated_at', { ascending: false });
-
-        // Query with safe 2.5s timeout
-        const { data, error } = await withTimeout(query, 2500);
-
-        if (!error && Array.isArray(data) && data.length > 0) {
-          const pgModels = data
-            .map(mapDbRowToModel)
-            .filter((m: Model) => m.status !== 'deleted' && !deletedIds.includes(m.id));
-
-          // Merge PostgreSQL models into our cloud cache map
-          const map = new Map<string, Model>();
-          this.sanitizeModels(this.data.models).forEach((m) => {
-            if (m.status !== 'deleted' && !deletedIds.includes(m.id)) {
-              map.set(m.id, m);
-            }
-          });
-          this.sanitizeModels(pgModels).forEach((m: Model) => map.set(m.id, m));
-
-          let models = Array.from(map.values());
-
-          if (params?.subject) {
-            models = models.filter((m) => m.subject === params.subject);
-          }
-          if (params?.category && params.category !== 'all') {
-            models = models.filter((m) => m.category === params.category);
-          }
-          if (params?.tag) {
-            models = models.filter((m: Model) => m.tags.includes(params.tag!));
-          }
-          if (params?.search) {
-            const q = params.search.toLowerCase().trim();
-            models = models.filter(
-              (m: Model) =>
-                m.title.toLowerCase().includes(q) ||
-                m.description.toLowerCase().includes(q) ||
-                m.tags.some((t: string) => t.toLowerCase().includes(q)) ||
-                m.category.toLowerCase().includes(q)
-            );
-          }
-          return models;
-        }
-      } catch (e) {
-        console.warn('[DB] Supabase getModels note (using cloud storage cache):', e);
-      }
-    }
-
-    // Cloud Storage / Local Fallback (Guaranteed to retain user uploads & deletions)
+    // Master Cloud Storage Cache (Guaranteed consistent across all Vercel instances)
     let result = this.sanitizeModels(this.data.models).filter(
-      (m) => m.status !== 'deleted' && !deletedIds.includes(m.id)
+      (m) => m.status !== 'deleted' && !deletedIds.includes(m.id) && !deletedIds.includes(m.slug)
     );
+
     if (params?.subject) result = result.filter((m) => m.subject === params.subject);
     if (params?.category && params.category !== 'all') result = result.filter((m) => m.category === params.category);
     if (params?.tag) result = result.filter((m) => m.tags.includes(params.tag!));
@@ -458,6 +396,7 @@ class DatabaseManager {
           m.category.toLowerCase().includes(q)
       );
     }
+
     const sort = params?.sort || 'updated';
     result.sort((a, b) => {
       if (sort === 'name-asc') return a.title.localeCompare(b.title, 'vi');
@@ -465,6 +404,7 @@ class DatabaseManager {
       if (sort === 'newest') return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
       return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
     });
+
     return result;
   }
 
@@ -607,31 +547,20 @@ class DatabaseManager {
       this.data.deletedIds.push(id);
     }
 
-    // Remove from in-memory arrays and immediately upload to Supabase Storage metadata/db.json
-    this.data.models = this.data.models.filter((m) => m.id !== id);
+    // 1. Remove from in-memory arrays and immediately upload to Supabase Storage metadata/db.json & Google Drive
+    this.data.models = this.data.models.filter((m) => m.id !== id && m.slug !== id);
     this.data.favorites = this.data.favorites.filter((fid) => fid !== id);
     this.data.recentViews = this.data.recentViews.filter((r) => r.modelId !== id);
     this.saveLocalData(this.data, true);
 
+    // 2. Hard delete from Supabase PostgreSQL tables so it can never resurrect
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
-        // Record as deleted in Supabase PostgreSQL
         await withTimeout(
-          supabase.from('models').upsert({
-            id: id,
-            title: 'deleted',
-            slug: id,
-            subject: 'math',
-            category: 'khac',
-            drive_file_id: 'deleted',
-            file_type: 'html',
-            status: 'deleted',
-            updated_at: new Date().toISOString(),
-          }),
+          supabase.from('models').delete().or(`id.eq.${id},slug.eq.${id}`),
           2000
         );
-
         supabase.from('favorites').delete().eq('model_id', id).then(() => {});
         supabase.from('recent_views').delete().eq('model_id', id).then(() => {});
       } catch (e) {
@@ -644,19 +573,9 @@ class DatabaseManager {
 
   // Favorites
   async getFavorites(): Promise<string[]> {
-    const supabase = getSupabaseClient();
-    if (supabase) {
-      try {
-        const { data, error } = await withTimeout(
-          supabase.from('favorites').select('model_id'),
-          2000
-        );
-        if (!error && data) {
-          return data.map((f: any) => f.model_id);
-        }
-      } catch (e) {}
-    }
-    return [...this.data.favorites];
+    await this.syncFromCloudStorage();
+    const deletedIds = this.data.deletedIds || [];
+    return (this.data.favorites || []).filter((fid) => !deletedIds.includes(fid) && !fid.startsWith('demo-'));
   }
 
   async toggleFavorite(modelId: string): Promise<boolean> {
@@ -692,29 +611,9 @@ class DatabaseManager {
   // Recent Views
   async getRecentViews(limit: number = 20): Promise<RecentView[]> {
     await this.syncFromCloudStorage();
-    const supabase = getSupabaseClient();
-    if (supabase) {
-      try {
-        const { data, error } = await withTimeout(
-          supabase
-            .from('recent_views')
-            .select('*')
-            .order('last_opened_at', { ascending: false })
-            .limit(limit),
-          2000
-        );
-
-        if (!error && data) {
-          return data.map((r: any) => ({
-            id: r.id,
-            modelId: r.model_id,
-            lastOpenedAt: r.last_opened_at,
-          }));
-        }
-      } catch (e) {}
-    }
-
-    return this.data.recentViews
+    const deletedIds = this.data.deletedIds || [];
+    return (this.data.recentViews || [])
+      .filter((r) => !deletedIds.includes(r.modelId) && !r.modelId?.startsWith('demo-'))
       .sort((a, b) => new Date(b.lastOpenedAt).getTime() - new Date(a.lastOpenedAt).getTime())
       .slice(0, limit);
   }
