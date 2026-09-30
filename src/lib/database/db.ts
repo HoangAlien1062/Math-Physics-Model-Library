@@ -3,6 +3,8 @@ import path from 'path';
 import os from 'os';
 import { Category, Favorite, Model, RecentView, Subject } from '@/types';
 import { getSupabaseClient } from '@/lib/supabase/client';
+import { getStorageProvider } from '@/lib/storage';
+import { GoogleDriveStorageProvider } from '@/lib/storage/google-drive-provider';
 
 // Helper to prevent any external cloud query from blocking the serverless function
 async function withTimeout<T = any>(promiseOrThenable: any, timeoutMs = 2500): Promise<T> {
@@ -46,108 +48,8 @@ export const DEFAULT_CATEGORIES: Category[] = [
   { id: 'cat-phy-11', subject: 'physics', slug: 'khac', name: 'Khác', orderIndex: 11 },
 ];
 
-// Seeded initial interactive models
-export const DEFAULT_MODELS: Model[] = [
-  // Math Models
-  {
-    id: 'demo-math-quad',
-    title: 'Khảo sát hàm số bậc hai y = ax² + bx + c',
-    slug: 'khao-sat-ham-so-bac-hai',
-    description: 'Mô hình trực quan hóa đồ thị Parabol, đỉnh Parabol, trục đối xứng và tìm nghiệm với thanh trượt tương tác thời gian thực.',
-    subject: 'math',
-    category: 'ham-so',
-    driveFileId: 'demo_quadratic_function.html',
-    entryFile: 'index.html',
-    fileType: 'html',
-    version: '1.2.0',
-    status: 'ready',
-    tags: ['hàm số', 'đại số', 'parabol', 'toán 10', 'tương tác'],
-    createdAt: '2026-03-15T08:00:00Z',
-    updatedAt: '2026-03-25T10:30:00Z',
-  },
-  {
-    id: 'demo-math-sine',
-    title: 'Khảo sát đồ thị hàm số lượng giác y = A sin(ωx + φ)',
-    slug: 'khao-sat-ham-so-luong-giac',
-    description: 'Khám phá sự biến thiên của biên độ A, tần số góc ω và pha ban đầu φ trên đường tròn lượng giác và đồ thị sóng điều hòa.',
-    subject: 'math',
-    category: 'giai-tich',
-    driveFileId: 'demo_quadratic_function.html',
-    entryFile: 'index.html',
-    fileType: 'html',
-    version: '1.1.0',
-    status: 'ready',
-    tags: ['lượng giác', 'đồ thị', 'sin', 'toán 11'],
-    createdAt: '2026-03-18T09:00:00Z',
-    updatedAt: '2026-03-26T12:00:00Z',
-  },
-  {
-    id: 'demo-math-pythagoras',
-    title: 'Trực quan hóa hình học & Định lý Pythagoras',
-    slug: 'dinh-ly-pythagoras-truc-quan',
-    description: 'Mô hình trực quan hóa diện tích các hình vuông dựng trên cạnh góc vuông và cạnh huyền tam giác vuông với hoạt họa phân rã hình khối.',
-    subject: 'math',
-    category: 'hinh-hoc',
-    driveFileId: 'demo_quadratic_function.html',
-    entryFile: 'index.html',
-    fileType: 'html',
-    version: '1.0.0',
-    status: 'ready',
-    tags: ['hình học', 'pythagoras', 'tam giác vuông'],
-    createdAt: '2026-03-22T10:00:00Z',
-    updatedAt: '2026-03-27T15:00:00Z',
-  },
-
-  // Physics Models
-  {
-    id: 'demo-phys-pendulum',
-    title: 'Mô phỏng con lắc đơn & Dao động điều hòa',
-    slug: 'mo-phong-con-lac-don-dao-dong-dieu-hoa',
-    description: 'Thí nghiệm ảo khảo sát chu kỳ dao động con lắc đơn theo chiều dài dây, gia tốc trọng trường g và hệ số ma sát cản không khí. Kéo thả vật nặng để thả góc ban đầu.',
-    subject: 'physics',
-    category: 'dao-dong',
-    driveFileId: 'demo_harmonic_pendulum.html',
-    entryFile: 'index.html',
-    fileType: 'html',
-    version: '1.3.1',
-    status: 'ready',
-    tags: ['dao động', 'cơ học', 'vật lý 12', 'con lắc', 'chu kỳ'],
-    createdAt: '2026-03-10T09:00:00Z',
-    updatedAt: '2026-03-28T14:15:00Z',
-  },
-  {
-    id: 'demo-phys-gas',
-    title: 'Mô phỏng khí lý tưởng & Định luật nhiệt động học',
-    slug: 'mo-phong-khi-ly-tuong-nhiet-dong-hoc',
-    description: 'Mô hình chuyển động hỗn loạn của các phân tử chất khí trong xi lanh có piston di động. Kiểm chứng định luật Boyle-Mariotte (PV = const) và Gay-Lussac với áp kế và nhiệt kế.',
-    subject: 'physics',
-    category: 'nhiet-hoc',
-    driveFileId: 'demo_ideal_gas.html',
-    entryFile: 'index.html',
-    fileType: 'html',
-    version: '1.1.0',
-    status: 'ready',
-    tags: ['nhiệt học', 'áp suất', 'thể tích', 'khí lý tưởng', 'piston'],
-    createdAt: '2026-03-20T11:00:00Z',
-    updatedAt: '2026-03-29T16:45:00Z',
-  },
-  {
-    id: 'demo-phys-projectile',
-    title: 'Mô phỏng chuyển động ném xiên trong trọng trường',
-    slug: 'mo-phong-chuyen-dong-nem-xien',
-    description: 'Khảo sát tầm xa, tầm cao, thời gian bay và phương trình quỹ đạo parabol của vật ném xiên với góc phóng α và vận tốc ban đầu v0 tùy chỉnh.',
-    subject: 'physics',
-    category: 'co-hoc',
-    driveFileId: 'demo_harmonic_pendulum.html',
-    entryFile: 'index.html',
-    fileType: 'html',
-    version: '1.0.0',
-    status: 'ready',
-    tags: ['cơ học', 'ném xiên', 'quỹ đạo', 'vật lý 10'],
-    createdAt: '2026-03-24T14:00:00Z',
-    updatedAt: '2026-03-29T18:00:00Z',
-  },
-];
+// Library models (Clean personal library, no hardcoded demos)
+export const DEFAULT_MODELS: Model[] = [];
 
 interface DataStore {
   categories: Category[];
@@ -220,8 +122,8 @@ class DatabaseManager {
         const parsed = JSON.parse(raw);
         return {
           categories: parsed.categories?.length ? parsed.categories : DEFAULT_CATEGORIES,
-          models: Array.isArray(parsed.models) ? parsed.models : DEFAULT_MODELS,
-          favorites: Array.isArray(parsed.favorites) ? parsed.favorites : ['demo-phys-pendulum'],
+          models: Array.isArray(parsed.models) ? parsed.models : [],
+          favorites: Array.isArray(parsed.favorites) ? parsed.favorites : [],
           recentViews: Array.isArray(parsed.recentViews) ? parsed.recentViews : [],
           deletedIds: Array.isArray(parsed.deletedIds) ? parsed.deletedIds : [],
         };
@@ -232,12 +134,9 @@ class DatabaseManager {
 
     return {
       categories: DEFAULT_CATEGORIES,
-      models: DEFAULT_MODELS,
-      favorites: ['demo-phys-pendulum'],
-      recentViews: [
-        { id: 'rec-1', modelId: 'demo-math-quad', lastOpenedAt: '2026-03-30T10:00:00Z' },
-        { id: 'rec-2', modelId: 'demo-phys-pendulum', lastOpenedAt: '2026-03-30T11:30:00Z' },
-      ],
+      models: [],
+      favorites: [],
+      recentViews: [],
       deletedIds: [],
     };
   }
@@ -246,45 +145,80 @@ class DatabaseManager {
 
   async syncFromCloudStorage(): Promise<void> {
     if (this.cloudSynced) return;
-    const supabase = getSupabaseClient();
-    if (!supabase) return;
 
+    // 1. Google Drive: Master Persistent Source of Truth across all Vercel instances
     try {
-      const { data, error } = await withTimeout(
-        supabase.storage.from('models-cache').download('metadata/db.json'),
-        2500
-      );
-
-      if (!error && data) {
-        const text = await data.text();
-        const parsed = JSON.parse(text);
-        if (parsed && typeof parsed === 'object') {
-          if (Array.isArray(parsed.models)) {
-            const map = new Map<string, Model>();
-            this.data.models.forEach((m) => map.set(m.id, m));
-            parsed.models.forEach((m: Model) => map.set(m.id, m));
-            this.data.models = Array.from(map.values());
+      const storage = getStorageProvider();
+      if (storage instanceof GoogleDriveStorageProvider && storage.isConfigured()) {
+        const driveJson = await storage.getDbJson();
+        if (driveJson) {
+          const parsed = JSON.parse(driveJson);
+          if (parsed && typeof parsed === 'object') {
+            if (Array.isArray(parsed.models)) {
+              this.data.models = parsed.models;
+            }
+            if (Array.isArray(parsed.deletedIds)) {
+              this.data.deletedIds = parsed.deletedIds;
+            }
+            if (Array.isArray(parsed.favorites)) {
+              this.data.favorites = parsed.favorites;
+            }
+            if (Array.isArray(parsed.recentViews)) {
+              this.data.recentViews = parsed.recentViews;
+            }
+            this.saveLocalData(this.data, false);
+            this.cloudSynced = true;
+            return;
           }
-          if (Array.isArray(parsed.deletedIds)) {
-            this.data.deletedIds = Array.from(
-              new Set([...(this.data.deletedIds || []), ...parsed.deletedIds])
-            );
+        } else {
+          // If no db.json yet, scan Google Drive Math and Physics folders for user uploaded files
+          const driveModels = await storage.scanDriveModels();
+          if (driveModels && driveModels.length > 0) {
+            this.data.models = driveModels;
+            this.saveLocalData(this.data, true);
+            this.cloudSynced = true;
+            return;
           }
-          if (Array.isArray(parsed.favorites)) {
-            this.data.favorites = Array.from(
-              new Set([...(this.data.favorites || []), ...parsed.favorites])
-            );
-          }
-          if (Array.isArray(parsed.recentViews)) {
-            this.data.recentViews = parsed.recentViews;
-          }
-          this.saveLocalData(this.data, false);
         }
       }
-      this.cloudSynced = true;
-    } catch (e) {
-      // Storage metadata file does not exist yet on initial setup
+    } catch (driveErr) {
+      console.warn('[DB] Google Drive sync note:', driveErr);
     }
+
+    // 2. Supabase Storage Fallback
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        const { data, error } = await withTimeout(
+          supabase.storage.from('models-cache').download('metadata/db.json'),
+          2500
+        );
+
+        if (!error && data) {
+          const text = await data.text();
+          const parsed = JSON.parse(text);
+          if (parsed && typeof parsed === 'object') {
+            if (Array.isArray(parsed.models)) {
+              this.data.models = parsed.models;
+            }
+            if (Array.isArray(parsed.deletedIds)) {
+              this.data.deletedIds = parsed.deletedIds;
+            }
+            if (Array.isArray(parsed.favorites)) {
+              this.data.favorites = parsed.favorites;
+            }
+            if (Array.isArray(parsed.recentViews)) {
+              this.data.recentViews = parsed.recentViews;
+            }
+            this.saveLocalData(this.data, false);
+            this.cloudSynced = true;
+            return;
+          }
+        }
+      } catch (e) {}
+    }
+
+    this.cloudSynced = true;
   }
 
   private saveLocalData(data: DataStore, syncToCloud = true) {
@@ -300,28 +234,39 @@ class DatabaseManager {
   }
 
   private async saveToCloudStorage(data: DataStore): Promise<void> {
-    const supabase = getSupabaseClient();
-    if (!supabase) return;
+    const jsonStr = JSON.stringify(data, null, 2);
 
+    // 1. Google Drive (Always syncs between Vercel lambdas)
     try {
-      const { data: buckets } = await supabase.storage.listBuckets();
-      const exists = buckets?.some((b) => b.name === 'models-cache');
-      if (!exists) {
-        await supabase.storage.createBucket('models-cache', { public: true });
+      const storage = getStorageProvider();
+      if (storage instanceof GoogleDriveStorageProvider && storage.isConfigured()) {
+        storage.saveDbJson(jsonStr).catch((e) =>
+          console.warn('[DB] Google Drive saveDbJson error:', e)
+        );
       }
+    } catch (e) {}
 
-      const jsonBuffer = Buffer.from(JSON.stringify(data, null, 2), 'utf-8');
-      await withTimeout(
-        supabase.storage
-          .from('models-cache')
-          .upload('metadata/db.json', jsonBuffer, {
-            contentType: 'application/json',
-            upsert: true,
-          }),
-        3000
-      );
-    } catch (err) {
-      console.warn('[DB] Could not sync metadata/db.json to Supabase Storage:', err);
+    // 2. Supabase Storage
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        const { data: buckets } = await supabase.storage.listBuckets();
+        const exists = buckets?.some((b) => b.name === 'models-cache');
+        if (!exists) {
+          await supabase.storage.createBucket('models-cache', { public: true });
+        }
+
+        const jsonBuffer = Buffer.from(jsonStr, 'utf-8');
+        await withTimeout(
+          supabase.storage
+            .from('models-cache')
+            .upload('metadata/db.json', jsonBuffer, {
+              contentType: 'application/json',
+              upsert: true,
+            }),
+          3000
+        );
+      } catch (err) {}
     }
   }
 

@@ -246,4 +246,123 @@ export class GoogleDriveStorageProvider implements StorageProvider {
       };
     }
   }
+
+  async getDbJson(): Promise<string | null> {
+    if (!this.isConfigured()) return null;
+    try {
+      const rootId = await this.getRootFolderId();
+      const res = await this.drive.files.list({
+        q: `'${rootId}' in parents and name = 'db.json' and trashed = false`,
+        fields: 'files(id, name)',
+        spaces: 'drive',
+      });
+
+      if (!res.data.files || res.data.files.length === 0) {
+        return null;
+      }
+
+      const fileId = res.data.files[0].id;
+      const fileRes = await this.drive.files.get(
+        { fileId, alt: 'media' },
+        { responseType: 'text' }
+      );
+      return typeof fileRes.data === 'string' ? fileRes.data : JSON.stringify(fileRes.data);
+    } catch (err) {
+      console.warn('[GoogleDrive] getDbJson note:', err);
+      return null;
+    }
+  }
+
+  async saveDbJson(jsonContent: string): Promise<void> {
+    if (!this.isConfigured()) return;
+    try {
+      const rootId = await this.getRootFolderId();
+      const res = await this.drive.files.list({
+        q: `'${rootId}' in parents and name = 'db.json' and trashed = false`,
+        fields: 'files(id, name)',
+        spaces: 'drive',
+      });
+
+      const stream = new Readable();
+      stream.push(jsonContent);
+      stream.push(null);
+
+      const media = {
+        mimeType: 'application/json',
+        body: stream,
+      };
+
+      if (res.data.files && res.data.files.length > 0) {
+        const fileId = res.data.files[0].id;
+        await this.drive.files.update({
+          fileId,
+          media,
+        });
+      } else {
+        await this.drive.files.create({
+          requestBody: {
+            name: 'db.json',
+            parents: [rootId],
+          },
+          media,
+        });
+      }
+    } catch (err) {
+      console.warn('[GoogleDrive] saveDbJson note:', err);
+    }
+  }
+
+  async scanDriveModels(): Promise<any[]> {
+    if (!this.isConfigured()) return [];
+    try {
+      const mathFolderId = await this.getOrCreateSubjectFolder('math');
+      const physFolderId = await this.getOrCreateSubjectFolder('physics');
+
+      const [mathFiles, physFiles] = await Promise.all([
+        this.listModelFiles(mathFolderId),
+        this.listModelFiles(physFolderId),
+      ]);
+
+      const models: any[] = [];
+
+      const parseFile = (f: StorageFileInfo, subject: 'math' | 'physics') => {
+        const parts = f.name.split('_');
+        const modelId = parts.length > 1 ? parts[0] : `model-${f.fileId}`;
+        const rawTitle = parts.slice(1).join('_').replace(/\.[^/.]+$/, '') || f.name;
+        const cleanTitle = decodeURIComponent(rawTitle);
+        const isZip = f.name.toLowerCase().endsWith('.zip');
+
+        return {
+          id: modelId,
+          title: cleanTitle,
+          slug: cleanTitle.toLowerCase().replace(/[^a-z0-9]/g, '-').slice(0, 50),
+          description: 'Mô hình học tập tương tác',
+          subject,
+          category: 'khac',
+          driveFileId: f.fileId,
+          entryFile: 'index.html',
+          fileType: isZip ? 'zip' : 'html',
+          fileSize: f.size,
+          version: '1.0.0',
+          status: 'ready',
+          tags: [],
+          featured: false,
+          createdAt: f.createdTime || new Date().toISOString(),
+          updatedAt: f.modifiedTime || new Date().toISOString(),
+        };
+      };
+
+      mathFiles.forEach((f) => {
+        if (!f.name.endsWith('db.json')) models.push(parseFile(f, 'math'));
+      });
+      physFiles.forEach((f) => {
+        if (!f.name.endsWith('db.json')) models.push(parseFile(f, 'physics'));
+      });
+
+      return models;
+    } catch (e) {
+      console.warn('[GoogleDrive] scanDriveModels note:', e);
+      return [];
+    }
+  }
 }
