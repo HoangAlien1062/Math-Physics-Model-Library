@@ -217,6 +217,7 @@ export function SubjectView({ subject, title, description }: SubjectViewProps) {
               key={model.id}
               model={model}
               isFavorite={favoriteIds.includes(model.id)}
+              onDelete={(id) => setModels((prev) => prev.filter((m) => m.id !== id))}
             />
           ))}
         </div>

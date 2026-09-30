@@ -154,6 +154,7 @@ interface DataStore {
   models: Model[];
   favorites: string[];
   recentViews: RecentView[];
+  deletedIds: string[];
 }
 
 function mapDbRowToModel(row: any): Model {
@@ -219,9 +220,10 @@ class DatabaseManager {
         const parsed = JSON.parse(raw);
         return {
           categories: parsed.categories?.length ? parsed.categories : DEFAULT_CATEGORIES,
-          models: parsed.models?.length ? parsed.models : DEFAULT_MODELS,
+          models: Array.isArray(parsed.models) ? parsed.models : DEFAULT_MODELS,
           favorites: Array.isArray(parsed.favorites) ? parsed.favorites : ['demo-phys-pendulum'],
-          recentViews: parsed.recentViews || [],
+          recentViews: Array.isArray(parsed.recentViews) ? parsed.recentViews : [],
+          deletedIds: Array.isArray(parsed.deletedIds) ? parsed.deletedIds : [],
         };
       } catch (err) {
         console.error('Failed to read db.json, using defaults:', err);
@@ -236,6 +238,7 @@ class DatabaseManager {
         { id: 'rec-1', modelId: 'demo-math-quad', lastOpenedAt: '2026-03-30T10:00:00Z' },
         { id: 'rec-2', modelId: 'demo-phys-pendulum', lastOpenedAt: '2026-03-30T11:30:00Z' },
       ],
+      deletedIds: [],
     };
   }
 
@@ -307,6 +310,23 @@ class DatabaseManager {
     return newCat;
   }
 
+  async getDeletedModelIds(): Promise<string[]> {
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        const { data } = await withTimeout(
+          supabase.from('models').select('id').eq('status', 'deleted'),
+          2000
+        );
+        if (data && Array.isArray(data)) {
+          const ids = data.map((d: any) => d.id);
+          this.data.deletedIds = Array.from(new Set([...(this.data.deletedIds || []), ...ids]));
+        }
+      } catch (e) {}
+    }
+    return this.data.deletedIds || [];
+  }
+
   // Models
   async getModels(params?: {
     subject?: Subject;
@@ -315,6 +335,7 @@ class DatabaseManager {
     tag?: string;
     sort?: 'newest' | 'name-asc' | 'name-desc' | 'updated';
   }): Promise<Model[]> {
+    const deletedIds = await this.getDeletedModelIds();
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
@@ -336,8 +357,10 @@ class DatabaseManager {
         // Query with safe 2.5s timeout
         const { data, error } = await withTimeout(query, 2500);
 
-        if (!error && data && data.length > 0) {
-          let models = data.map(mapDbRowToModel);
+        if (!error && Array.isArray(data) && data.length > 0) {
+          let models = data
+            .map(mapDbRowToModel)
+            .filter((m: Model) => m.status !== 'deleted' && !deletedIds.includes(m.id));
 
           if (params?.tag) {
             models = models.filter((m: Model) => m.tags.includes(params.tag!));
@@ -360,17 +383,19 @@ class DatabaseManager {
     }
 
     // Local / Default Fallback (Fast & 100% reliable)
-    let result = [...this.data.models].filter((m) => m.status !== 'deleted');
+    let result = [...this.data.models].filter(
+      (m) => m.status !== 'deleted' && !deletedIds.includes(m.id)
+    );
     if (params?.subject) result = result.filter((m) => m.subject === params.subject);
     if (params?.category && params.category !== 'all') result = result.filter((m) => m.category === params.category);
     if (params?.tag) result = result.filter((m) => m.tags.includes(params.tag!));
     if (params?.search) {
       const q = params.search.toLowerCase().trim();
       result = result.filter(
-        (m) =>
+        (m: Model) =>
           m.title.toLowerCase().includes(q) ||
           m.description.toLowerCase().includes(q) ||
-          m.tags.some((t) => t.toLowerCase().includes(q)) ||
+          m.tags.some((t: string) => t.toLowerCase().includes(q)) ||
           m.category.toLowerCase().includes(q)
       );
     }
@@ -385,6 +410,10 @@ class DatabaseManager {
   }
 
   async getModelById(id: string): Promise<Model | null> {
+    if ((this.data.deletedIds || []).includes(id)) {
+      return null;
+    }
+
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
@@ -397,7 +426,7 @@ class DatabaseManager {
 
         const { data, error } = await withTimeout(query, 2000);
 
-        if (!error && data) {
+        if (!error && data && data.status !== 'deleted' && !(this.data.deletedIds || []).includes(data.id)) {
           // Update last accessed timestamp in background
           supabase
             .from('models')
@@ -410,7 +439,12 @@ class DatabaseManager {
       } catch (e) {}
     }
 
-    const found = this.data.models.find((m) => (m.id === id || m.slug === id) && m.status !== 'deleted');
+    const found = this.data.models.find(
+      (m) =>
+        (m.id === id || m.slug === id) &&
+        m.status !== 'deleted' &&
+        !(this.data.deletedIds || []).includes(m.id)
+    );
     return found || null;
   }
 
@@ -507,21 +541,45 @@ class DatabaseManager {
   }
 
   async deleteModel(id: string): Promise<boolean> {
+    if (!this.data.deletedIds) {
+      this.data.deletedIds = [];
+    }
+    if (!this.data.deletedIds.includes(id)) {
+      this.data.deletedIds.push(id);
+    }
+
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
+        // Record as deleted so Supabase filters it out permanently
         await withTimeout(
-          supabase.from('models').update({ status: 'deleted' }).eq('id', id),
+          supabase.from('models').upsert({
+            id: id,
+            title: 'deleted',
+            slug: id,
+            subject: 'math',
+            category: 'khac',
+            drive_file_id: 'deleted',
+            file_type: 'html',
+            status: 'deleted',
+            updated_at: new Date().toISOString(),
+          }),
           2000
         );
-      } catch (e) {}
+
+        // Clean up relations
+        supabase.from('favorites').delete().eq('model_id', id).then(() => {});
+        supabase.from('recent_views').delete().eq('model_id', id).then(() => {});
+      } catch (e) {
+        console.warn('[DB] Supabase deleteModel error:', e);
+      }
     }
 
-    const idx = this.data.models.findIndex((m) => m.id === id);
-    if (idx !== -1) {
-      this.data.models[idx].status = 'deleted';
-      this.saveLocalData(this.data);
-    }
+    // Remove from in-memory arrays
+    this.data.models = this.data.models.filter((m) => m.id !== id);
+    this.data.favorites = this.data.favorites.filter((fid) => fid !== id);
+    this.data.recentViews = this.data.recentViews.filter((r) => r.modelId !== id);
+    this.saveLocalData(this.data);
     return true;
   }
 

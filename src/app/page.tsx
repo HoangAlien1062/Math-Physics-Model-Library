@@ -72,6 +72,10 @@ export default function HomePage() {
     };
   }, []);
 
+  const handleDelete = (modelId: string) => {
+    setAllModels((prev) => prev.filter((m) => m.id !== modelId));
+  };
+
   const mathModels = allModels.filter((m) => m.subject === 'math').slice(0, 3);
   const physicsModels = allModels.filter((m) => m.subject === 'physics').slice(0, 3);
   const favoriteModels = allModels.filter((m) => favoriteIds.includes(m.id));
@@ -139,6 +143,7 @@ export default function HomePage() {
                 key={model.id}
                 model={model}
                 isFavorite={favoriteIds.includes(model.id)}
+                onDelete={handleDelete}
               />
             ))}
           </div>
@@ -167,6 +172,7 @@ export default function HomePage() {
                 key={model.id}
                 model={model}
                 isFavorite={true}
+                onDelete={handleDelete}
               />
             ))}
           </div>
@@ -210,6 +216,7 @@ export default function HomePage() {
                 key={model.id}
                 model={model}
                 isFavorite={favoriteIds.includes(model.id)}
+                onDelete={handleDelete}
               />
             ))}
           </div>
@@ -253,6 +260,7 @@ export default function HomePage() {
                 key={model.id}
                 model={model}
                 isFavorite={favoriteIds.includes(model.id)}
+                onDelete={handleDelete}
               />
             ))}
           </div>

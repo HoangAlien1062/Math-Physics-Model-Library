@@ -10,6 +10,8 @@ import {
   Play,
   Calendar,
   Sparkles,
+  Trash2,
+  Loader2,
 } from 'lucide-react';
 import { useToast } from '@/components/ui/Toast';
 
@@ -17,16 +19,47 @@ interface ModelCardProps {
   model: Model;
   isFavorite?: boolean;
   onToggleFavorite?: (modelId: string) => void;
+  onDelete?: (modelId: string) => void;
 }
 
 export function ModelCard({
   model,
   isFavorite = false,
   onToggleFavorite,
+  onDelete,
 }: ModelCardProps) {
   const [favorite, setFavorite] = useState(isFavorite);
   const [loadingFav, setLoadingFav] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const { showToast } = useToast();
+
+  const handleDeleteClick = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (!confirm(`Bạn có chắc chắn muốn xóa mô hình "${model.title}" khỏi thư viện?`)) {
+      return;
+    }
+
+    setIsDeleting(true);
+    try {
+      const res = await fetch(`/api/models/${model.id}`, {
+        method: 'DELETE',
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Lỗi khi xóa mô hình');
+      }
+
+      showToast(`Đã xóa mô hình "${model.title}"`, 'success');
+      if (onDelete) {
+        onDelete(model.id);
+      }
+    } catch (err: any) {
+      showToast(err.message || 'Không thể xóa mô hình', 'error');
+      setIsDeleting(false);
+    }
+  };
 
   const handleFavoriteClick = async (e: React.MouseEvent) => {
     e.preventDefault();
@@ -109,19 +142,35 @@ export function ModelCard({
           </div>
         )}
 
-        {/* Favorite Button on Card Top Right */}
-        <button
-          onClick={handleFavoriteClick}
-          disabled={loadingFav}
-          aria-label={favorite ? 'Bỏ yêu thích' : 'Yêu thích'}
-          className={`absolute top-2.5 right-2.5 p-2 rounded-full backdrop-blur-md shadow-sm transition-all ${
-            favorite
-              ? 'bg-amber-50 text-amber-500 border border-amber-200'
-              : 'bg-white/80 text-slate-400 hover:text-amber-500 hover:bg-white border border-slate-200/60'
-          }`}
-        >
-          <Star className={`w-4 h-4 ${favorite ? 'fill-amber-400 text-amber-500' : ''}`} />
-        </button>
+        {/* Actions on Card Top Right: Delete & Favorite */}
+        <div className="absolute top-2.5 right-2.5 flex items-center gap-1.5 z-10">
+          <button
+            onClick={handleDeleteClick}
+            disabled={isDeleting}
+            title="Xóa mô hình này"
+            aria-label="Xóa mô hình"
+            className="p-1.5 sm:p-2 rounded-full backdrop-blur-md shadow-sm transition-all bg-white/90 text-slate-400 hover:text-rose-600 hover:bg-white border border-slate-200/80 opacity-90 sm:opacity-0 group-hover:opacity-100 focus:opacity-100"
+          >
+            {isDeleting ? (
+              <Loader2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 animate-spin text-rose-500" />
+            ) : (
+              <Trash2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+            )}
+          </button>
+
+          <button
+            onClick={handleFavoriteClick}
+            disabled={loadingFav}
+            aria-label={favorite ? 'Bỏ yêu thích' : 'Yêu thích'}
+            className={`p-1.5 sm:p-2 rounded-full backdrop-blur-md shadow-sm transition-all ${
+              favorite
+                ? 'bg-amber-50 text-amber-500 border border-amber-200'
+                : 'bg-white/80 text-slate-400 hover:text-amber-500 hover:bg-white border border-slate-200/60'
+            }`}
+          >
+            <Star className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${favorite ? 'fill-amber-400 text-amber-500' : ''}`} />
+          </button>
+        </div>
 
         {/* File Type Pill on Card Top Left (if not featured) */}
         {!model.featured && (

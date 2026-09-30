@@ -259,6 +259,7 @@ export default function MyLibraryPage() {
                 model={model}
                 isFavorite={favoriteIds.includes(model.id)}
                 onToggleFavorite={fetchLibraryData}
+                onDelete={fetchLibraryData}
               />
 
               {/* Quick Actions */}
