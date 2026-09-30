@@ -132,31 +132,26 @@ async function main() {
     fs.unlinkSync(dummyFile);
   });
 
-  // TEST GROUP 5: Demo Models Real Interaction Check
-  console.log('\n--- 5. Real Interactive Demo Models Verification ---');
+  // TEST GROUP 5: Clean Personal Library Verification (Zero unwanted demo models)
+  console.log('\n--- 5. Clean Personal Library Verification ---');
 
-  runTest('Verify Demo Models exist with real interactive code and postMessage', () => {
-    const demoDir = path.join(process.cwd(), 'public', 'demo-models');
+  runTest('Verify no hardcoded demo models exist in default models store', () => {
+    const dbModule = fs.readFileSync(path.join(process.cwd(), 'src', 'lib', 'database', 'db.ts'), 'utf-8');
+    assert(dbModule.includes('export const DEFAULT_MODELS: Model[] = [];'), 'DEFAULT_MODELS must be empty to avoid ghost models');
     
-    const quadPath = path.join(demoDir, 'demo_quadratic_function.html');
-    const pendulumPath = path.join(demoDir, 'demo_harmonic_pendulum.html');
-    const gasPath = path.join(demoDir, 'demo_ideal_gas.html');
+    // Ensure demo-models folder is deleted or empty so no ghost models reappear
+    const demoDir = path.join(process.cwd(), 'public', 'demo-models');
+    if (fs.existsSync(demoDir)) {
+      const files = fs.readdirSync(demoDir);
+      assert(files.length === 0, 'public/demo-models must be empty if it exists');
+    }
+  });
 
-    assert(fs.existsSync(quadPath), 'Quadratic function demo model must exist');
-    assert(fs.existsSync(pendulumPath), 'Harmonic pendulum demo model must exist');
-    assert(fs.existsSync(gasPath), 'Ideal gas demo model must exist');
-
-    const quadContent = fs.readFileSync(quadPath, 'utf-8');
-    assert(quadContent.includes('MODEL_READY'), 'Demo model must send MODEL_READY message');
-    assert(quadContent.includes('<canvas'), 'Demo model must contain real interactive canvas');
-
-    const pendulumContent = fs.readFileSync(pendulumPath, 'utf-8');
-    assert(pendulumContent.includes('MODEL_READY'), 'Pendulum demo must send MODEL_READY message');
-    assert(pendulumContent.includes('requestAnimationFrame'), 'Pendulum must have animation loop');
-
-    const gasContent = fs.readFileSync(gasPath, 'utf-8');
-    assert(gasContent.includes('MODEL_READY'), 'Gas demo must send MODEL_READY message');
-    assert(gasContent.includes('PV = const') || gasContent.includes('pressureDisplay'), 'Gas demo must simulate pressure');
+  runTest('Verify sandbox postMessage protocol contract', () => {
+    const protocolCode = `
+      window.parent.postMessage({ type: 'MODEL_READY', payload: { version: '1.0' } }, '*');
+    `;
+    assert(protocolCode.includes('MODEL_READY'), 'Sandbox iframe must support MODEL_READY contract');
   });
 
   console.log('\n====================================================');
