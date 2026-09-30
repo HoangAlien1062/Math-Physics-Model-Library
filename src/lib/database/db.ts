@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { Category, Favorite, Model, RecentView, Subject } from '@/types';
+import { put, list } from '@vercel/blob';
 
 // Seeded categories for Math and Physics
 export const DEFAULT_CATEGORIES: Category[] = [
@@ -94,6 +95,8 @@ interface DataStore {
 class DatabaseManager {
   private dataFilePath: string;
   private data: DataStore;
+  private lastCloudSync: number = 0;
+  private isSyncing: boolean = false;
 
   constructor() {
     let dataDir: string;
@@ -148,20 +151,67 @@ class DatabaseManager {
         { id: 'rec-2', modelId: 'demo-phys-pendulum', lastOpenedAt: '2026-03-30T11:30:00Z' },
       ],
     };
-    this.saveData(initial);
     return initial;
   }
 
-  private saveData(data: DataStore) {
+  private async syncFromCloud(): Promise<void> {
+    // Cache for 3 seconds to avoid unnecessary requests on multiple simultaneous queries
+    if (Date.now() - this.lastCloudSync < 3000) return;
+    if (this.isSyncing) return;
+
+    if (process.env.BLOB_READ_WRITE_TOKEN) {
+      this.isSyncing = true;
+      try {
+        const { blobs } = await list({ prefix: 'metadata/db.json' });
+        if (blobs.length > 0) {
+          const res = await fetch(blobs[0].url, { cache: 'no-store' });
+          if (res.ok) {
+            const parsed = await res.json();
+            if (parsed && Array.isArray(parsed.models)) {
+              this.data = {
+                categories: parsed.categories?.length ? parsed.categories : DEFAULT_CATEGORIES,
+                models: parsed.models,
+                favorites: Array.isArray(parsed.favorites) ? parsed.favorites : [],
+                recentViews: Array.isArray(parsed.recentViews) ? parsed.recentViews : [],
+              };
+              this.lastCloudSync = Date.now();
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[DB] Vercel Blob sync note:', err);
+      } finally {
+        this.isSyncing = false;
+      }
+    }
+  }
+
+  private async saveData(data: DataStore): Promise<void> {
+    // 1. Local filesystem
     try {
       fs.writeFileSync(this.dataFilePath, JSON.stringify(data, null, 2), 'utf-8');
     } catch (err) {
-      console.warn('Filesystem save note (in-memory preserved):', err);
+      console.warn('Filesystem save note:', err);
+    }
+
+    // 2. Vercel Blob Cloud Persistence
+    if (process.env.BLOB_READ_WRITE_TOKEN) {
+      try {
+        await put('metadata/db.json', JSON.stringify(data, null, 2), {
+          access: 'public',
+          addRandomSuffix: false,
+          contentType: 'application/json',
+        });
+        this.lastCloudSync = Date.now();
+      } catch (blobErr) {
+        console.error('[DB] Failed to save metadata to Vercel Blob:', blobErr);
+      }
     }
   }
 
   // Categories
   async getCategories(subject?: Subject): Promise<Category[]> {
+    await this.syncFromCloud();
     if (subject) {
       return this.data.categories
         .filter((c) => c.subject === subject)
@@ -171,12 +221,13 @@ class DatabaseManager {
   }
 
   async addCategory(cat: Omit<Category, 'id'>): Promise<Category> {
+    await this.syncFromCloud();
     const newCat: Category = {
       ...cat,
       id: `cat-${Date.now()}`,
     };
     this.data.categories.push(newCat);
-    this.saveData(this.data);
+    await this.saveData(this.data);
     return newCat;
   }
 
@@ -188,6 +239,7 @@ class DatabaseManager {
     tag?: string;
     sort?: 'newest' | 'name-asc' | 'name-desc' | 'updated';
   }): Promise<Model[]> {
+    await this.syncFromCloud();
     let result = [...this.data.models].filter((m) => m.status !== 'deleted');
 
     if (params?.subject) {
@@ -225,11 +277,13 @@ class DatabaseManager {
   }
 
   async getModelById(id: string): Promise<Model | null> {
+    await this.syncFromCloud();
     const found = this.data.models.find((m) => (m.id === id || m.slug === id) && m.status !== 'deleted');
     return found || null;
   }
 
   async createModel(model: Omit<Model, 'id' | 'createdAt' | 'updatedAt'>): Promise<Model> {
+    await this.syncFromCloud();
     const newModel: Model = {
       ...model,
       id: `model-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
@@ -237,11 +291,12 @@ class DatabaseManager {
       updatedAt: new Date().toISOString(),
     };
     this.data.models.unshift(newModel);
-    this.saveData(this.data);
+    await this.saveData(this.data);
     return newModel;
   }
 
   async updateModel(id: string, updates: Partial<Model>): Promise<Model | null> {
+    await this.syncFromCloud();
     const idx = this.data.models.findIndex((m) => m.id === id);
     if (idx === -1) return null;
 
@@ -250,44 +305,50 @@ class DatabaseManager {
       ...updates,
       updatedAt: new Date().toISOString(),
     };
-    this.saveData(this.data);
+    await this.saveData(this.data);
     return this.data.models[idx];
   }
 
   async deleteModel(id: string): Promise<boolean> {
+    await this.syncFromCloud();
     const idx = this.data.models.findIndex((m) => m.id === id);
     if (idx === -1) return false;
     this.data.models[idx].status = 'deleted';
-    this.saveData(this.data);
+    await this.saveData(this.data);
     return true;
   }
 
   // Favorites
   async getFavorites(): Promise<string[]> {
+    await this.syncFromCloud();
     return [...this.data.favorites];
   }
 
   async toggleFavorite(modelId: string): Promise<boolean> {
+    await this.syncFromCloud();
     const idx = this.data.favorites.indexOf(modelId);
+    let isFav = false;
     if (idx >= 0) {
       this.data.favorites.splice(idx, 1);
-      this.saveData(this.data);
-      return false;
+      isFav = false;
     } else {
       this.data.favorites.push(modelId);
-      this.saveData(this.data);
-      return true;
+      isFav = true;
     }
+    await this.saveData(this.data);
+    return isFav;
   }
 
   // Recent Views
   async getRecentViews(limit: number = 20): Promise<RecentView[]> {
+    await this.syncFromCloud();
     return this.data.recentViews
       .sort((a, b) => new Date(b.lastOpenedAt).getTime() - new Date(a.lastOpenedAt).getTime())
       .slice(0, limit);
   }
 
   async recordRecentView(modelId: string): Promise<void> {
+    await this.syncFromCloud();
     const idx = this.data.recentViews.findIndex((r) => r.modelId === modelId);
     if (idx >= 0) {
       this.data.recentViews[idx].lastOpenedAt = new Date().toISOString();
@@ -299,7 +360,7 @@ class DatabaseManager {
       });
     }
     this.data.recentViews = this.data.recentViews.slice(0, 50);
-    this.saveData(this.data);
+    await this.saveData(this.data);
   }
 }
 

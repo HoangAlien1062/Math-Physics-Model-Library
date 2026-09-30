@@ -80,7 +80,16 @@ export class VercelBlobStorageProvider implements StorageProvider {
   async getModelFile(
     driveFileId: string
   ): Promise<{ buffer: Buffer; fileName: string; mimeType: string } | null> {
-    if (!driveFileId || !driveFileId.startsWith('http')) {
+    if (!driveFileId) return null;
+
+    if (!driveFileId.startsWith('http')) {
+      try {
+        const { GoogleDriveStorageProvider } = await import('./google-drive-provider');
+        const gdrive = new GoogleDriveStorageProvider();
+        if (gdrive.isConfigured()) {
+          return await gdrive.getModelFile(driveFileId);
+        }
+      } catch {}
       return null;
     }
 
