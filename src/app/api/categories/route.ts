@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/database/db';
-import { getAuthenticatedUser } from '@/lib/auth/session';
 import { Subject } from '@/types';
 
 export async function GET(req: NextRequest) {
@@ -17,11 +16,6 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const user = getAuthenticatedUser(req);
-    if (user.role !== 'admin') {
-      return NextResponse.json({ success: false, error: 'Chỉ Admin mới có quyền thêm danh mục' }, { status: 403 });
-    }
-
     const body = await req.json();
     const { subject, name, slug, icon, orderIndex } = body;
 

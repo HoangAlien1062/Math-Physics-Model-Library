@@ -1,15 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/database/db';
-import { getAuthenticatedUser } from '@/lib/auth/session';
 
-export async function GET(req: NextRequest) {
+export async function GET() {
   try {
-    const user = getAuthenticatedUser(req);
-    if (!user) {
-      return NextResponse.json({ success: true, recentModels: [] });
-    }
-
-    const recentViews = await db.getRecentViews(user.id);
+    const recentViews = await db.getRecentViews();
     const modelIds = recentViews.map((r) => r.modelId);
 
     const allModels = await db.getModels();
@@ -28,16 +22,11 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const user = getAuthenticatedUser(req);
-    if (!user) {
-      return NextResponse.json({ success: true });
-    }
-
     const body = await req.json();
     const { modelId } = body;
 
     if (modelId) {
-      await db.recordRecentView(user.id, modelId);
+      await db.recordRecentView(modelId);
     }
 
     return NextResponse.json({ success: true });

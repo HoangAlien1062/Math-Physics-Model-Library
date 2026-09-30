@@ -1,8 +1,7 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import { getStorageProvider } from '@/lib/storage';
-import { getAuthenticatedUser } from '@/lib/auth/session';
 
-export async function GET(req: NextRequest) {
+export async function GET() {
   try {
     const storage = getStorageProvider();
     const status = await storage.getStorageStatus();
@@ -13,13 +12,8 @@ export async function GET(req: NextRequest) {
   }
 }
 
-export async function POST(req: NextRequest) {
+export async function POST() {
   try {
-    const user = getAuthenticatedUser(req);
-    if (user.role !== 'admin') {
-      return NextResponse.json({ success: false, error: 'Chỉ Admin mới có quyền đồng bộ lưu trữ' }, { status: 403 });
-    }
-
     const storage = getStorageProvider();
     const status = await storage.getStorageStatus();
 

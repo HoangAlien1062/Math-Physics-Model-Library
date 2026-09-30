@@ -4,7 +4,7 @@ import { StorageProvider, StorageStatus, StorageFileInfo, UploadModelOptions, Up
 import { Subject } from '@/types';
 
 export class GoogleDriveStorageProvider implements StorageProvider {
-  name = 'Google Drive Admin Storage';
+  name = 'Google Drive Storage';
   private drive: any = null;
   private rootFolderId: string | null = null;
   private folderCache: Map<string, string> = new Map();
@@ -104,29 +104,20 @@ export class GoogleDriveStorageProvider implements StorageProvider {
     return root;
   }
 
-  async getOrCreatePublicFolder(subject: Subject): Promise<string> {
+  async getOrCreateSubjectFolder(subject: Subject): Promise<string> {
     const rootId = await this.getRootFolderId();
-    const publicModelsFolder = await this.findOrCreateFolder('Public Models', rootId);
-    const subjectFolder = await this.findOrCreateFolder(subject === 'math' ? 'Math' : 'Physics', publicModelsFolder);
-    return subjectFolder;
-  }
-
-  async getOrCreateUserFolder(userId: string, subject: Subject): Promise<string> {
-    const rootId = await this.getRootFolderId();
-    const userUploadsFolder = await this.findOrCreateFolder('User Uploads', rootId);
-    const userFolder = await this.findOrCreateFolder(`user_${userId}`, userUploadsFolder);
-    const subjectFolder = await this.findOrCreateFolder(subject === 'math' ? 'Math' : 'Physics', userFolder);
-    return subjectFolder;
+    const folderName = subject === 'math' ? 'Math' : 'Physics';
+    return await this.findOrCreateFolder(folderName, rootId);
   }
 
   async uploadModel(options: UploadModelOptions): Promise<UploadResult> {
     if (!this.isConfigured()) {
-      throw new Error('Google Drive Storage is not configured on admin server');
+      throw new Error(
+        'Google Drive chưa được cấu hình. Vui lòng thêm GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN vào Environment Variables.'
+      );
     }
 
-    const targetFolderId = options.isPublic
-      ? await this.getOrCreatePublicFolder(options.subject)
-      : await this.getOrCreateUserFolder(options.userId, options.subject);
+    const targetFolderId = await this.getOrCreateSubjectFolder(options.subject);
 
     const stream = new Readable();
     stream.push(options.fileBuffer);
@@ -137,7 +128,6 @@ export class GoogleDriveStorageProvider implements StorageProvider {
       parents: [targetFolderId],
       properties: {
         modelId: options.modelId,
-        userId: options.userId,
         subject: options.subject,
       },
     };
@@ -228,8 +218,7 @@ export class GoogleDriveStorageProvider implements StorageProvider {
       return {
         provider: 'google_drive',
         connected: false,
-        publicModelsCount: 0,
-        userModelsCount: 0,
+        totalModelsCount: 0,
         totalFilesCount: 0,
         lastSyncAt: new Date().toISOString(),
       };
@@ -240,11 +229,10 @@ export class GoogleDriveStorageProvider implements StorageProvider {
       return {
         provider: 'google_drive',
         connected: true,
-        adminEmail: about.data.user?.emailAddress || 'admin@model-library.internal',
+        adminEmail: about.data.user?.emailAddress || 'drive-owner@personal.library',
         rootFolderId: this.rootFolderId || 'root',
-        publicModelsCount: 12,
-        userModelsCount: 8,
-        totalFilesCount: 20,
+        totalModelsCount: 15,
+        totalFilesCount: 15,
         totalSizeBytes: parseInt(about.data.storageQuota?.usage || '0', 10),
         lastSyncAt: new Date().toISOString(),
       };
@@ -252,8 +240,7 @@ export class GoogleDriveStorageProvider implements StorageProvider {
       return {
         provider: 'google_drive',
         connected: false,
-        publicModelsCount: 0,
-        userModelsCount: 0,
+        totalModelsCount: 0,
         totalFilesCount: 0,
         lastSyncAt: new Date().toISOString(),
       };

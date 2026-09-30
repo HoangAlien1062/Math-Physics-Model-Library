@@ -9,10 +9,7 @@ import {
   Star,
   Play,
   Calendar,
-  Lock,
-  Globe,
   Sparkles,
-  ExternalLink,
 } from 'lucide-react';
 import { useToast } from '@/components/ui/Toast';
 
@@ -20,14 +17,12 @@ interface ModelCardProps {
   model: Model;
   isFavorite?: boolean;
   onToggleFavorite?: (modelId: string) => void;
-  showOwnerBadge?: boolean;
 }
 
 export function ModelCard({
   model,
   isFavorite = false,
   onToggleFavorite,
-  showOwnerBadge = false,
 }: ModelCardProps) {
   const [favorite, setFavorite] = useState(isFavorite);
   const [loadingFav, setLoadingFav] = useState(false);
@@ -38,65 +33,78 @@ export function ModelCard({
     e.stopPropagation();
 
     setLoadingFav(true);
+    const newFav = !favorite;
+    setFavorite(newFav);
+
     try {
       const res = await fetch('/api/favorites', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ modelId: model.id }),
       });
+
       const data = await res.json();
-      if (data.success) {
-        setFavorite(data.isFavorite);
-        showToast(
-          data.isFavorite ? 'Đã thêm vào mô hình yêu thích' : 'Đã bỏ khỏi yêu thích',
-          'info'
-        );
-        if (onToggleFavorite) onToggleFavorite(model.id);
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Lỗi lưu yêu thích');
       }
-    } catch (err) {
-      console.error(err);
+
+      setFavorite(data.isFavorite);
+      if (onToggleFavorite) onToggleFavorite(model.id);
+
+      showToast(
+        data.isFavorite ? 'Đã thêm vào mục Yêu thích' : 'Đã bỏ khỏi mục Yêu thích',
+        'info'
+      );
+    } catch (err: any) {
+      setFavorite(!newFav);
+      showToast(err.message || 'Không thể cập nhật yêu thích', 'error');
     } finally {
       setLoadingFav(false);
     }
   };
 
   const isMath = model.subject === 'math';
-
-  // Format date
-  const updatedDate = new Date(model.updatedAt || model.createdAt).toLocaleDateString('vi-VN', {
+  const updatedDate = new Date(model.updatedAt).toLocaleDateString('vi-VN', {
     day: '2-digit',
     month: '2-digit',
     year: 'numeric',
   });
 
   return (
-    <div className="group relative flex flex-col bg-white rounded-xl border border-slate-200/80 shadow-sm hover:shadow-md hover:border-slate-300 transition-all duration-200 overflow-hidden">
-      
-      {/* Thumbnail / Header Visual */}
-      <Link href={`/models/${model.id}`} className="relative h-44 w-full bg-slate-50 flex items-center justify-center overflow-hidden border-b border-slate-100">
-        {model.thumbnailUrl ? (
+    <div className="group bg-white rounded-2xl border border-slate-200/80 shadow-sm hover:shadow-md hover:border-blue-300/80 transition-all duration-200 flex flex-col overflow-hidden">
+      {/* Thumbnail / Header Gradient */}
+      <Link
+        href={`/models/${model.id}`}
+        className="relative block aspect-[16/9] w-full overflow-hidden bg-slate-100"
+      >
+        <div
+          className={`w-full h-full flex items-center justify-center transition-transform duration-300 group-hover:scale-105 ${
+            isMath
+              ? 'bg-gradient-to-br from-emerald-500/10 via-teal-500/10 to-indigo-500/10'
+              : 'bg-gradient-to-br from-blue-500/10 via-indigo-500/10 to-violet-500/10'
+          }`}
+        >
+          {isMath ? (
+            <Sigma className="w-16 h-16 text-emerald-500/30 group-hover:text-emerald-500/50 transition-colors" />
+          ) : (
+            <Atom className="w-16 h-16 text-blue-500/30 group-hover:text-blue-500/50 transition-colors" />
+          )}
+        </div>
+
+        {/* Thumbnail overlay if available */}
+        {model.thumbnailUrl && (
           <img
             src={model.thumbnailUrl}
             alt={model.title}
-            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+            className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
           />
-        ) : (
-          <div
-            className={`w-full h-full flex flex-col items-center justify-center p-6 text-center transition-transform duration-300 group-hover:scale-102 ${
-              isMath ? 'bg-gradient-to-br from-emerald-50 via-teal-50/50 to-blue-50' : 'bg-gradient-to-br from-blue-50 via-sky-50/50 to-indigo-50'
-            }`}
-          >
-            {isMath ? (
-              <div className="w-16 h-16 rounded-2xl bg-white shadow-sm flex items-center justify-center text-emerald-600 border border-emerald-100 mb-2">
-                <Sigma className="w-8 h-8" />
-              </div>
-            ) : (
-              <div className="w-16 h-16 rounded-2xl bg-white shadow-sm flex items-center justify-center text-blue-600 border border-blue-100 mb-2">
-                <Atom className="w-8 h-8" />
-              </div>
-            )}
-            <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-              {isMath ? 'Toán học' : 'Vật lý'} • {model.category}
+        )}
+
+        {/* Featured badge if any */}
+        {model.featured && (
+          <div className="absolute top-2.5 left-2.5 flex items-center gap-1.5">
+            <span className="flex items-center gap-1 bg-amber-500 text-white text-[11px] font-semibold px-2 py-0.5 rounded-md shadow-sm">
+              <Sparkles className="w-3 h-3 fill-current" /> Nổi bật
             </span>
           </div>
         )}
@@ -115,21 +123,14 @@ export function ModelCard({
           <Star className={`w-4 h-4 ${favorite ? 'fill-amber-400 text-amber-500' : ''}`} />
         </button>
 
-        {/* Visibility / Type Pill on Card Top Left */}
-        <div className="absolute top-2.5 left-2.5 flex items-center gap-1.5">
-          {model.visibility === 'private' ? (
-            <span className="flex items-center gap-1 bg-slate-900/75 backdrop-blur text-white text-[11px] font-medium px-2 py-0.5 rounded-md">
-              <Lock className="w-3 h-3" /> Cá nhân
+        {/* File Type Pill on Card Top Left (if not featured) */}
+        {!model.featured && (
+          <div className="absolute top-2.5 left-2.5 flex items-center gap-1.5">
+            <span className="bg-white/90 backdrop-blur text-slate-700 text-[11px] font-semibold uppercase px-2 py-0.5 rounded-md border border-slate-200 shadow-sm">
+              {model.fileType}
             </span>
-          ) : (
-            <span className="flex items-center gap-1 bg-blue-600/90 backdrop-blur text-white text-[11px] font-medium px-2 py-0.5 rounded-md">
-              <Globe className="w-3 h-3" /> Công khai
-            </span>
-          )}
-          <span className="bg-white/90 backdrop-blur text-slate-700 text-[11px] font-semibold uppercase px-1.5 py-0.5 rounded-md border border-slate-200">
-            {model.fileType}
-          </span>
-        </div>
+          </div>
+        )}
       </Link>
 
       {/* Content Body */}

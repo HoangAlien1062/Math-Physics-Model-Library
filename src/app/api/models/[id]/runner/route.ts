@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/database/db';
-import { getAuthenticatedUser, canAccessModel } from '@/lib/auth/session';
 import { getStorageProvider } from '@/lib/storage';
 import JSZip from 'jszip';
 import fs from 'fs';
@@ -9,20 +8,11 @@ import path from 'path';
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> | { id: string } }) {
   try {
     const resolvedParams = await Promise.resolve(params);
-    const user = getAuthenticatedUser(req);
     const model = await db.getModelById(resolvedParams.id);
 
     if (!model) {
       return new NextResponse('<h1>404 - Mô hình không tồn tại</h1>', {
         status: 404,
-        headers: { 'Content-Type': 'text/html; charset=utf-8' },
-      });
-    }
-
-    // IDOR Protection: Private models accessible only to owner or admin
-    if (!canAccessModel(model, user)) {
-      return new NextResponse('<h1>403 - Bạn không có quyền truy cập mô hình này</h1>', {
-        status: 403,
         headers: { 'Content-Type': 'text/html; charset=utf-8' },
       });
     }
@@ -48,7 +38,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       }
     }
 
-    // 2. Fetch model file from Google Drive Admin Storage or fallback provider
+    // 2. Fetch model file from Google Drive Storage or fallback provider
     const storage = getStorageProvider();
     const stored = await storage.getModelFile(model.driveFileId);
 

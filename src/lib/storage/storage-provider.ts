@@ -13,12 +13,10 @@ export interface StorageFileInfo {
 
 export interface UploadModelOptions {
   modelId: string;
-  userId: string;
   subject: Subject;
   fileName: string;
   fileBuffer: Buffer;
   mimeType: string;
-  isPublic?: boolean;
 }
 
 export interface UploadResult {
@@ -33,8 +31,7 @@ export interface StorageProvider {
   name: string;
   isConfigured(): boolean;
   getStorageStatus(): Promise<StorageStatus>;
-  getOrCreateUserFolder(userId: string, subject: Subject): Promise<string>;
-  getOrCreatePublicFolder(subject: Subject): Promise<string>;
+  getOrCreateSubjectFolder(subject: Subject): Promise<string>;
   uploadModel(options: UploadModelOptions): Promise<UploadResult>;
   getModelFile(driveFileId: string): Promise<{ buffer: Buffer; fileName: string; mimeType: string } | null>;
   deleteModel(driveFileId: string, driveFolderId?: string): Promise<boolean>;

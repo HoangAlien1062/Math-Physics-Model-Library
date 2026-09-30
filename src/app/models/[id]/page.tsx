@@ -9,30 +9,27 @@ import {
   ArrowLeft,
   Star,
   Calendar,
-  Lock,
-  Globe,
   Tag,
   Share2,
   FileCode,
   HardDrive,
-  Layers,
+  Trash2,
   AlertCircle,
   Loader2,
   Info,
 } from 'lucide-react';
-import { useAuth } from '@/lib/auth/auth-context';
 import { useToast } from '@/components/ui/Toast';
 
 export default function ModelDetailPage() {
   const params = useParams();
   const router = useRouter();
-  const { user, isAdmin } = useAuth();
   const { showToast } = useToast();
 
   const modelId = params.id as string;
   const [model, setModel] = useState<Model | null>(null);
   const [isFavorite, setIsFavorite] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -52,17 +49,15 @@ export default function ModelDetailPage() {
       })
       .finally(() => setLoading(false));
 
-    if (user) {
-      fetch('/api/favorites')
-        .then((res) => res.json())
-        .then((data) => {
-          if (data.success && data.favorites) {
-            setIsFavorite(data.favorites.includes(modelId));
-          }
-        })
-        .catch(() => {});
-    }
-  }, [modelId, user]);
+    fetch('/api/favorites')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.success && data.favorites) {
+          setIsFavorite(data.favorites.includes(modelId));
+        }
+      })
+      .catch(() => {});
+  }, [modelId]);
 
   const handleFavoriteToggle = async () => {
     try {
@@ -88,6 +83,30 @@ export default function ModelDetailPage() {
     if (typeof window !== 'undefined') {
       navigator.clipboard.writeText(window.location.href);
       showToast('Đã sao chép liên kết vào bộ nhớ tạm', 'info');
+    }
+  };
+
+  const handleDeleteModel = async () => {
+    if (!model) return;
+    if (!confirm(`Bạn có chắc chắn muốn xóa mô hình "${model.title}" khỏi thư viện?`)) {
+      return;
+    }
+
+    setIsDeleting(true);
+    try {
+      const res = await fetch(`/api/models/${model.id}`, {
+        method: 'DELETE',
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Không thể xóa mô hình');
+      }
+
+      showToast('Đã xóa mô hình thành công!', 'success');
+      router.push('/');
+    } catch (err: any) {
+      showToast(err.message || 'Lỗi khi xóa mô hình', 'error');
+      setIsDeleting(false);
     }
   };
 
@@ -149,7 +168,7 @@ export default function ModelDetailPage() {
           </div>
         </div>
 
-        {/* Favorite & Share Buttons */}
+        {/* Favorite, Share & Delete Actions */}
         <div className="flex items-center gap-2">
           <button
             onClick={handleFavoriteToggle}
@@ -170,6 +189,15 @@ export default function ModelDetailPage() {
             <Share2 className="w-3.5 h-3.5" />
             <span>Chia sẻ</span>
           </button>
+
+          <button
+            onClick={handleDeleteModel}
+            disabled={isDeleting}
+            className="flex items-center gap-1.5 text-xs font-semibold text-rose-600 bg-rose-50 border border-rose-200/80 hover:bg-rose-100/80 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            <span>{isDeleting ? 'Đang xóa...' : 'Xóa mô hình'}</span>
+          </button>
         </div>
       </div>
 
@@ -180,7 +208,7 @@ export default function ModelDetailPage() {
         </h1>
       </div>
 
-      {/* 10. MODEL VIEWER: An expansive sandboxed interactive runner */}
+      {/* MODEL VIEWER: An expansive sandboxed interactive runner */}
       <section className="w-full">
         <ModelViewer model={model} />
       </section>
@@ -222,17 +250,9 @@ export default function ModelDetailPage() {
           </div>
 
           <div>
-            <span className="text-slate-400 block font-medium">Quyền riêng tư</span>
+            <span className="text-slate-400 block font-medium">Lưu trữ</span>
             <span className="font-semibold text-slate-800 flex items-center gap-1 mt-0.5">
-              {model.visibility === 'public' ? (
-                <>
-                  <Globe className="w-3.5 h-3.5 text-blue-600" /> Công khai
-                </>
-              ) : (
-                <>
-                  <Lock className="w-3.5 h-3.5 text-slate-600" /> Riêng tư (Admin Drive)
-                </>
-              )}
+              <HardDrive className="w-3.5 h-3.5 text-blue-600" /> Google Drive
             </span>
           </div>
 

@@ -40,40 +40,29 @@ export class LocalFallbackStorageProvider implements StorageProvider {
     return true;
   }
 
-  async getOrCreatePublicFolder(subject: Subject): Promise<string> {
-    const dir = path.join(this.baseDir, 'Public Models', subject === 'math' ? 'Math' : 'Physics');
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-    return dir;
-  }
-
-  async getOrCreateUserFolder(userId: string, subject: Subject): Promise<string> {
-    const dir = path.join(this.baseDir, 'User Uploads', `user_${userId}`, subject === 'math' ? 'Math' : 'Physics');
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
+  async getOrCreateSubjectFolder(subject: Subject): Promise<string> {
+    const dir = path.join(this.baseDir, subject === 'math' ? 'Math' : 'Physics');
+    try {
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+    } catch (e) {}
     return dir;
   }
 
   async uploadModel(options: UploadModelOptions): Promise<UploadResult> {
-    const targetFolder = options.isPublic
-      ? await this.getOrCreatePublicFolder(options.subject)
-      : await this.getOrCreateUserFolder(options.userId, options.subject);
-
+    const targetFolder = await this.getOrCreateSubjectFolder(options.subject);
     const safeFileName = `${options.modelId}_${options.fileName.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
     const filePath = path.join(targetFolder, safeFileName);
 
     await fs.promises.writeFile(filePath, options.fileBuffer);
 
-    // Save a small metadata descriptor beside it
     const metaPath = `${filePath}.meta.json`;
     await fs.promises.writeFile(
       metaPath,
       JSON.stringify(
         {
           modelId: options.modelId,
-          userId: options.userId,
           subject: options.subject,
           fileName: options.fileName,
           mimeType: options.mimeType,
@@ -94,7 +83,6 @@ export class LocalFallbackStorageProvider implements StorageProvider {
   }
 
   async getModelFile(driveFileId: string): Promise<{ buffer: Buffer; fileName: string; mimeType: string } | null> {
-    // Search recursively in baseDir
     const findFile = (dir: string): string | null => {
       if (!fs.existsSync(dir)) return null;
       const entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -197,11 +185,10 @@ export class LocalFallbackStorageProvider implements StorageProvider {
     return {
       provider: 'local_fallback',
       connected: true,
-      adminEmail: 'local-admin-storage@math-physics.library',
-      rootFolderId: 'local_root_data_storage',
-      publicModelsCount: 5,
-      userModelsCount: totalFiles,
-      totalFilesCount: totalFiles + 5,
+      adminEmail: 'local-personal-storage@library.internal',
+      rootFolderId: 'local_root_storage',
+      totalModelsCount: totalFiles,
+      totalFilesCount: totalFiles,
       totalSizeBytes: totalBytes,
       lastSyncAt: new Date().toISOString(),
     };

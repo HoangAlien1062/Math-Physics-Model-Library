@@ -1,7 +1,6 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import Link from 'next/link';
 import { Model, Subject } from '@/types';
 import { ModelCard } from '@/components/model/ModelCard';
 import {
@@ -13,20 +12,13 @@ import {
   Atom,
   Trash2,
   Edit3,
-  Play,
-  Calendar,
-  Lock,
-  Layers,
-  FileQuestion,
   AlertTriangle,
   X,
 } from 'lucide-react';
-import { useAuth } from '@/lib/auth/auth-context';
 import { useToast } from '@/components/ui/Toast';
 import { UploadModal } from '@/components/model/UploadModal';
 
 export default function MyLibraryPage() {
-  const { user } = useAuth();
   const { showToast } = useToast();
 
   const [activeTab, setActiveTab] = useState<'my_models' | 'favorites' | 'recent'>('my_models');
@@ -52,21 +44,18 @@ export default function MyLibraryPage() {
   const fetchLibraryData = async () => {
     setLoading(true);
     try {
-      // 1. Fetch user's uploaded models
-      const myRes = await fetch('/api/models?mine=true');
-      const myData = await myRes.json();
-      if (myData.success) setMyModels(myData.models);
+      // 1. Fetch personal models
+      const allRes = await fetch('/api/models');
+      const allData = await allRes.json();
+      if (allData.success) {
+        setMyModels(allData.models);
+        const map = new Map<string, Model>(allData.models.map((m: Model) => [m.id, m]));
 
-      // 2. Fetch favorites
-      const favRes = await fetch('/api/favorites');
-      const favData = await favRes.json();
-      if (favData.success) {
-        setFavoriteIds(favData.favorites);
-        // Fetch all models to match favorites
-        const allRes = await fetch('/api/models');
-        const allData = await allRes.json();
-        if (allData.success) {
-          const map = new Map<string, Model>(allData.models.map((m: Model) => [m.id, m]));
+        // 2. Fetch favorites
+        const favRes = await fetch('/api/favorites');
+        const favData = await favRes.json();
+        if (favData.success) {
+          setFavoriteIds(favData.favorites);
           setFavoriteModels(favData.favorites.map((id: string) => map.get(id)).filter(Boolean));
         }
       }
@@ -84,7 +73,7 @@ export default function MyLibraryPage() {
 
   useEffect(() => {
     fetchLibraryData();
-  }, [user]);
+  }, []);
 
   const handleDeleteModel = async () => {
     if (!deletingModel) return;
@@ -95,7 +84,7 @@ export default function MyLibraryPage() {
       });
       const data = await res.json();
       if (data.success) {
-        showToast('Đã xóa mô hình và file trên Google Drive Admin', 'success');
+        showToast('Đã xóa mô hình và file trên hệ thống lưu trữ', 'success');
         setDeletingModel(null);
         fetchLibraryData();
       } else {
@@ -164,7 +153,7 @@ export default function MyLibraryPage() {
         <div>
           <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">Thư viện của tôi</h1>
           <p className="text-xs sm:text-sm text-slate-500 mt-0.5">
-            Quản lý mô hình cá nhân, mô hình yêu thích và lịch sử trải nghiệm
+            Quản lý tất cả mô hình học tập, danh sách yêu thích và lịch sử xem
           </p>
         </div>
 
@@ -190,7 +179,7 @@ export default function MyLibraryPage() {
             }`}
           >
             <FolderOpen className="w-4 h-4" />
-            <span>Mô hình của tôi ({myModels.length})</span>
+            <span>Tất cả mô hình ({myModels.length})</span>
           </button>
 
           <button
@@ -272,30 +261,28 @@ export default function MyLibraryPage() {
                 onToggleFavorite={fetchLibraryData}
               />
 
-              {/* Quick Actions (only on user's own models) */}
-              {activeTab === 'my_models' && (
-                <div className="mt-2 flex items-center justify-between px-3 py-1.5 bg-slate-100/90 rounded-lg text-xs">
-                  <span className="text-slate-500 font-medium truncate max-w-[120px]">
-                    v{model.version || '1.0.0'} • {model.fileType}
-                  </span>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => openEditModal(model)}
-                      className="p-1 text-slate-600 hover:text-blue-600 transition-colors"
-                      title="Sửa thông tin"
-                    >
-                      <Edit3 className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      onClick={() => setDeletingModel(model)}
-                      className="p-1 text-slate-600 hover:text-rose-600 transition-colors"
-                      title="Xóa mô hình"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
+              {/* Quick Actions */}
+              <div className="mt-2 flex items-center justify-between px-3 py-1.5 bg-slate-100/90 rounded-lg text-xs">
+                <span className="text-slate-500 font-medium truncate max-w-[120px]">
+                  v{model.version || '1.0.0'} • {model.fileType}
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => openEditModal(model)}
+                    className="p-1 text-slate-600 hover:text-blue-600 transition-colors"
+                    title="Sửa thông tin"
+                  >
+                    <Edit3 className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={() => setDeletingModel(model)}
+                    className="p-1 text-slate-600 hover:text-rose-600 transition-colors"
+                    title="Xóa mô hình"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
                 </div>
-              )}
+              </div>
             </div>
           ))}
         </div>
@@ -313,26 +300,24 @@ export default function MyLibraryPage() {
           </div>
           <h3 className="text-base font-bold text-slate-800">
             {activeTab === 'my_models'
-              ? 'Chưa có mô hình nào do bạn tải lên'
+              ? 'Chưa có mô hình nào trong thư viện'
               : activeTab === 'favorites'
               ? 'Bạn chưa lưu mô hình yêu thích nào'
               : 'Chưa có lịch sử xem mô hình'}
           </h3>
           <p className="text-xs text-slate-500 mt-1">
             {activeTab === 'my_models'
-              ? 'Bấm nút bên dưới để tải lên file .html hoặc .zip project đầu tiên của bạn.'
+              ? 'Bấm nút bên dưới để tải lên file .html hoặc .zip đầu tiên.'
               : 'Hãy khám phá các mô hình Toán và Vật lý để đánh dấu hoặc trải nghiệm.'}
           </p>
 
-          {activeTab === 'my_models' && (
-            <button
-              onClick={() => setIsUploadOpen(true)}
-              className="mt-4 inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold shadow-sm transition-colors"
-            >
-              <PlusCircle className="w-4 h-4" />
-              <span>Thêm mô hình ngay</span>
-            </button>
-          )}
+          <button
+            onClick={() => setIsUploadOpen(true)}
+            className="mt-4 inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold shadow-sm transition-colors"
+          >
+            <PlusCircle className="w-4 h-4" />
+            <span>Thêm mô hình ngay</span>
+          </button>
         </div>
       )}
 
@@ -413,7 +398,7 @@ export default function MyLibraryPage() {
               <h3 className="text-base font-bold text-slate-900">Xác nhận xóa mô hình?</h3>
               <p className="text-xs text-slate-500 mt-1">
                 Thao tác này sẽ xóa vĩnh viễn mô hình <strong>&ldquo;{deletingModel.title}&rdquo;</strong> và tệp tin trên
-                Google Drive của Admin. Không thể hoàn tác.
+                hệ thống lưu trữ Google Drive. Không thể hoàn tác.
               </p>
             </div>
 

@@ -1,8 +1,9 @@
 import fs from 'fs';
 import path from 'path';
-import { Category, Favorite, Model, RecentView, Subject, User } from '@/types';
+import os from 'os';
+import { Category, Favorite, Model, RecentView, Subject } from '@/types';
 
-// Default seeded categories according to specifications
+// Seeded categories for Math and Physics
 export const DEFAULT_CATEGORIES: Category[] = [
   // Math
   { id: 'cat-math-1', subject: 'math', slug: 'dai-so', name: 'Đại số', orderIndex: 1 },
@@ -31,7 +32,7 @@ export const DEFAULT_CATEGORIES: Category[] = [
   { id: 'cat-phy-11', subject: 'physics', slug: 'khac', name: 'Khác', orderIndex: 11 },
 ];
 
-// Seeded real interactive models (built-in public models for live demonstration)
+// Seeded initial interactive models
 export const DEFAULT_MODELS: Model[] = [
   {
     id: 'demo-math-quad',
@@ -40,9 +41,6 @@ export const DEFAULT_MODELS: Model[] = [
     description: 'Mô hình trực quan hóa đồ thị Parabol, đỉnh Parabol, trục đối xứng và tìm nghiệm với thanh trượt tương tác thời gian thực.',
     subject: 'math',
     category: 'ham-so',
-    visibility: 'public',
-    ownerUserId: 'admin-001',
-    ownerName: 'Admin Hệ Thống',
     driveFileId: 'demo_quadratic_function.html',
     entryFile: 'index.html',
     fileType: 'html',
@@ -59,9 +57,6 @@ export const DEFAULT_MODELS: Model[] = [
     description: 'Thí nghiệm ảo khảo sát chu kỳ dao động con lắc đơn theo chiều dài dây, gia tốc trọng trường g và hệ số ma sát cản không khí. Kéo thả vật nặng để thả góc ban đầu.',
     subject: 'physics',
     category: 'dao-dong',
-    visibility: 'public',
-    ownerUserId: 'admin-001',
-    ownerName: 'Admin Hệ Thống',
     driveFileId: 'demo_harmonic_pendulum.html',
     entryFile: 'index.html',
     fileType: 'html',
@@ -78,9 +73,6 @@ export const DEFAULT_MODELS: Model[] = [
     description: 'Mô hình chuyển động hỗn loạn của các phân tử chất khí trong xi lanh có piston di động. Kiểm chứng định luật Boyle-Mariotte (PV = const) và Gay-Lussac với áp kế và nhiệt kế.',
     subject: 'physics',
     category: 'nhiet-hoc',
-    visibility: 'public',
-    ownerUserId: 'admin-001',
-    ownerName: 'Admin Hệ Thống',
     driveFileId: 'demo_ideal_gas.html',
     entryFile: 'index.html',
     fileType: 'html',
@@ -95,11 +87,9 @@ export const DEFAULT_MODELS: Model[] = [
 interface DataStore {
   categories: Category[];
   models: Model[];
-  favorites: Favorite[];
+  favorites: string[];
   recentViews: RecentView[];
 }
-
-import os from 'os';
 
 class DatabaseManager {
   private dataFilePath: string;
@@ -141,22 +131,21 @@ class DatabaseManager {
         return {
           categories: parsed.categories?.length ? parsed.categories : DEFAULT_CATEGORIES,
           models: parsed.models?.length ? parsed.models : DEFAULT_MODELS,
-          favorites: parsed.favorites || [],
+          favorites: Array.isArray(parsed.favorites) ? parsed.favorites : ['demo-phys-pendulum'],
           recentViews: parsed.recentViews || [],
         };
       } catch (err) {
         console.error('Failed to read db.json, using defaults:', err);
       }
     }
+
     const initial: DataStore = {
       categories: DEFAULT_CATEGORIES,
       models: DEFAULT_MODELS,
-      favorites: [
-        { id: 'fav-1', userId: 'user-001', modelId: 'demo-phys-pendulum', createdAt: '2026-03-29T00:00:00Z' },
-      ],
+      favorites: ['demo-phys-pendulum'],
       recentViews: [
-        { id: 'rec-1', userId: 'user-001', modelId: 'demo-math-quad', lastOpenedAt: '2026-03-30T10:00:00Z' },
-        { id: 'rec-2', userId: 'user-001', modelId: 'demo-phys-pendulum', lastOpenedAt: '2026-03-30T11:30:00Z' },
+        { id: 'rec-1', modelId: 'demo-math-quad', lastOpenedAt: '2026-03-30T10:00:00Z' },
+        { id: 'rec-2', modelId: 'demo-phys-pendulum', lastOpenedAt: '2026-03-30T11:30:00Z' },
       ],
     };
     this.saveData(initial);
@@ -167,7 +156,6 @@ class DatabaseManager {
     try {
       fs.writeFileSync(this.dataFilePath, JSON.stringify(data, null, 2), 'utf-8');
     } catch (err) {
-      // In-memory data is still fully kept for current request
       console.warn('Filesystem save note (in-memory preserved):', err);
     }
   }
@@ -198,8 +186,6 @@ class DatabaseManager {
     category?: string;
     search?: string;
     tag?: string;
-    visibility?: 'public' | 'private' | 'all';
-    ownerUserId?: string;
     sort?: 'newest' | 'name-asc' | 'name-desc' | 'updated';
   }): Promise<Model[]> {
     let result = [...this.data.models].filter((m) => m.status !== 'deleted');
@@ -216,16 +202,6 @@ class DatabaseManager {
       result = result.filter((m) => m.tags.includes(params.tag!));
     }
 
-    if (params?.visibility === 'public') {
-      result = result.filter((m) => m.visibility === 'public');
-    } else if (params?.visibility === 'private' && params.ownerUserId) {
-      result = result.filter((m) => m.visibility === 'private' && m.ownerUserId === params.ownerUserId);
-    }
-
-    if (params?.ownerUserId && !params.visibility) {
-      result = result.filter((m) => m.ownerUserId === params.ownerUserId);
-    }
-
     if (params?.search) {
       const q = params.search.toLowerCase().trim();
       result = result.filter(
@@ -237,7 +213,6 @@ class DatabaseManager {
       );
     }
 
-    // Sort
     const sort = params?.sort || 'updated';
     result.sort((a, b) => {
       if (sort === 'name-asc') return a.title.localeCompare(b.title, 'vi');
@@ -288,49 +263,41 @@ class DatabaseManager {
   }
 
   // Favorites
-  async getFavorites(userId: string): Promise<string[]> {
-    return this.data.favorites.filter((f) => f.userId === userId).map((f) => f.modelId);
+  async getFavorites(): Promise<string[]> {
+    return [...this.data.favorites];
   }
 
-  async toggleFavorite(userId: string, modelId: string): Promise<boolean> {
-    const idx = this.data.favorites.findIndex((f) => f.userId === userId && f.modelId === modelId);
+  async toggleFavorite(modelId: string): Promise<boolean> {
+    const idx = this.data.favorites.indexOf(modelId);
     if (idx >= 0) {
       this.data.favorites.splice(idx, 1);
       this.saveData(this.data);
-      return false; // unfavorited
+      return false;
     } else {
-      this.data.favorites.push({
-        id: `fav-${Date.now()}`,
-        userId,
-        modelId,
-        createdAt: new Date().toISOString(),
-      });
+      this.data.favorites.push(modelId);
       this.saveData(this.data);
-      return true; // favorited
+      return true;
     }
   }
 
   // Recent Views
-  async getRecentViews(userId: string, limit: number = 20): Promise<RecentView[]> {
+  async getRecentViews(limit: number = 20): Promise<RecentView[]> {
     return this.data.recentViews
-      .filter((r) => r.userId === userId)
       .sort((a, b) => new Date(b.lastOpenedAt).getTime() - new Date(a.lastOpenedAt).getTime())
       .slice(0, limit);
   }
 
-  async recordRecentView(userId: string, modelId: string): Promise<void> {
-    const idx = this.data.recentViews.findIndex((r) => r.userId === userId && r.modelId === modelId);
+  async recordRecentView(modelId: string): Promise<void> {
+    const idx = this.data.recentViews.findIndex((r) => r.modelId === modelId);
     if (idx >= 0) {
       this.data.recentViews[idx].lastOpenedAt = new Date().toISOString();
     } else {
       this.data.recentViews.unshift({
         id: `rec-${Date.now()}`,
-        userId,
         modelId,
         lastOpenedAt: new Date().toISOString(),
       });
     }
-    // Trim to 50
     this.data.recentViews = this.data.recentViews.slice(0, 50);
     this.saveData(this.data);
   }

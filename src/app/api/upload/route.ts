@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAuthenticatedUser } from '@/lib/auth/session';
 import { getStorageProvider } from '@/lib/storage';
 import { db } from '@/lib/database/db';
 import { sanitizeRelativePath, isValidEntryFile, MAX_UPLOAD_SIZE, MAX_UNCOMPRESSED_RATIO } from '@/lib/security/sanitize';
@@ -8,11 +7,6 @@ import JSZip from 'jszip';
 
 export async function POST(req: NextRequest) {
   try {
-    const user = getAuthenticatedUser(req);
-    if (!user) {
-      return NextResponse.json({ success: false, error: 'Yêu cầu đăng nhập trước khi tải lên' }, { status: 401 });
-    }
-
     const formData = await req.formData();
     const file = formData.get('file') as File | null;
     const formSubject = formData.get('subject') as Subject | null;
@@ -21,7 +15,6 @@ export async function POST(req: NextRequest) {
     const formDescription = formData.get('description') as string | null;
     const formTags = formData.get('tags') as string | null;
     const formEntryFile = formData.get('entryFile') as string | null;
-    const isPublic = user.role === 'admin' && formData.get('isPublic') === 'true';
 
     if (!file) {
       return NextResponse.json({ success: false, error: 'Chưa chọn file để tải lên' }, { status: 400 });
@@ -142,16 +135,14 @@ export async function POST(req: NextRequest) {
 
     const modelId = `model-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
 
-    // 3. Upload to Google Drive Admin Storage (Central Admin Storage)
+    // 3. Upload to Google Drive Storage / Local fallback
     const storage = getStorageProvider();
     const uploadResult = await storage.uploadModel({
       modelId,
-      userId: user.id,
       subject: finalSubject,
       fileName,
       fileBuffer: buffer,
       mimeType: isZip ? 'application/zip' : 'text/html',
-      isPublic,
     });
 
     // 4. Save metadata in database
@@ -161,9 +152,6 @@ export async function POST(req: NextRequest) {
       description: finalDescription,
       subject: finalSubject,
       category: finalCategory,
-      visibility: isPublic ? 'public' : 'private',
-      ownerUserId: user.id,
-      ownerName: user.displayName,
       driveFileId: uploadResult.driveFileId,
       driveFolderId: uploadResult.driveFolderId,
       entryFile: detectedEntryFile,

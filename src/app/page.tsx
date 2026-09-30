@@ -11,21 +11,17 @@ import {
   Clock,
   Star,
   Sparkles,
-  Layers,
-  Compass,
 } from 'lucide-react';
-import { useAuth } from '@/lib/auth/auth-context';
 
 export default function HomePage() {
-  const { user } = useAuth();
   const [allModels, setAllModels] = useState<Model[]>([]);
   const [recentModels, setRecentModels] = useState<Model[]>([]);
   const [favoriteIds, setFavoriteIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // 1. Fetch public models
-    fetch('/api/models?visibility=public')
+    // 1. Fetch personal models
+    fetch('/api/models')
       .then((res) => res.json())
       .then((data) => {
         if (data.success && data.models) {
@@ -35,27 +31,25 @@ export default function HomePage() {
       .catch((err) => console.error(err))
       .finally(() => setLoading(false));
 
-    // 2. Fetch user's recent and favorites
-    if (user) {
-      fetch('/api/recent')
-        .then((res) => res.json())
-        .then((data) => {
-          if (data.success && data.recentModels) {
-            setRecentModels(data.recentModels);
-          }
-        })
-        .catch(() => {});
+    // 2. Fetch recent and favorites
+    fetch('/api/recent')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.success && data.recentModels) {
+          setRecentModels(data.recentModels);
+        }
+      })
+      .catch(() => {});
 
-      fetch('/api/favorites')
-        .then((res) => res.json())
-        .then((data) => {
-          if (data.success && data.favorites) {
-            setFavoriteIds(data.favorites);
-          }
-        })
-        .catch(() => {});
-    }
-  }, [user]);
+    fetch('/api/favorites')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.success && data.favorites) {
+          setFavoriteIds(data.favorites);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   const mathModels = allModels.filter((m) => m.subject === 'math').slice(0, 3);
   const physicsModels = allModels.filter((m) => m.subject === 'physics').slice(0, 3);
@@ -64,23 +58,23 @@ export default function HomePage() {
   return (
     <div className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-12 space-y-12">
       
-      {/* 5. HERO SECTION: Clean, Modern Scientific, Bright */}
+      {/* HERO SECTION: Clean, Modern Scientific, Bright */}
       <section className="bg-white rounded-2xl border border-slate-200/90 p-8 sm:p-12 shadow-sm text-center max-w-4xl mx-auto">
         <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-50 border border-blue-100 text-blue-700 text-xs font-semibold mb-4">
           <Sparkles className="w-3.5 h-3.5" />
-          <span>Thư viện mô hình tương tác HTML5 / JavaScript</span>
+          <span>Thư viện mô hình tương tác HTML5 / JavaScript của bạn</span>
         </div>
 
-        <h1 className="text-2xl sm:text-4xl font-extrabold text-slate-900 tracking-tight leading-tight">
-          MÔ HÌNH TOÁN & VẬT LÝ TƯƠNG TÁC
+        <h1 className="text-2xl sm:text-4xl font-extrabold text-slate-900 tracking-tight leading-tight uppercase">
+          Thư viện mô hình Toán & Vật lý
         </h1>
 
         <p className="mt-3 text-sm sm:text-base text-slate-600 max-w-2xl mx-auto leading-relaxed">
-          Khám phá và chạy trực tiếp các mô hình học tập ngay trên trình duyệt mà không cần cài đặt.
-          Tương tác trực quan với đồ thị, phân tử, con lắc và các định luật vật lý thời gian thực.
+          Không gian lưu trữ và chạy trực tiếp các mô hình học tập ngay trên trình duyệt mà không cần cài đặt.
+          Tương tác trực quan với đồ thị hàm số, con lắc, chuyển động và các định luật vật lý.
         </p>
 
-        {/* Hai nút lớn */}
+        {/* Buttons */}
         <div className="mt-8 flex flex-col sm:flex-row items-center justify-center gap-3.5">
           <Link
             href="/math"
@@ -102,13 +96,13 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* 29. TIẾP TỤC KHÁM PHÁ (Recent models) */}
+      {/* TIẾP TỤC KHÁM PHÁ (Recent models) */}
       {recentModels.length > 0 && (
         <section className="space-y-4">
           <div className="flex items-center justify-between border-b border-slate-200 pb-3">
             <div className="flex items-center gap-2">
               <Clock className="w-4 h-4 text-blue-600" />
-              <h2 className="text-lg font-bold text-slate-900">Tiếp tục khám phá</h2>
+              <h2 className="text-lg font-bold text-slate-900">Mới xem gần đây</h2>
             </div>
             <Link
               href="/my-library"
@@ -130,7 +124,7 @@ export default function HomePage() {
         </section>
       )}
 
-      {/* 29. YÊU THÍCH (Favorites) */}
+      {/* YÊU THÍCH (Favorites) */}
       {favoriteModels.length > 0 && (
         <section className="space-y-4">
           <div className="flex items-center justify-between border-b border-slate-200 pb-3">
@@ -158,7 +152,7 @@ export default function HomePage() {
         </section>
       )}
 
-      {/* MÔ HÌNH TOÁN NỔI BẬT */}
+      {/* MÔ HÌNH TOÁN HỌC */}
       <section className="space-y-4">
         <div className="flex items-center justify-between border-b border-slate-200 pb-3">
           <div className="flex items-center gap-2">
@@ -166,7 +160,7 @@ export default function HomePage() {
               <Sigma className="w-4 h-4" />
             </div>
             <div>
-              <h2 className="text-lg font-bold text-slate-900">Mô hình Toán học tiêu biểu</h2>
+              <h2 className="text-lg font-bold text-slate-900">Mô hình Toán học</h2>
               <p className="text-xs text-slate-500">Đại số, hình học, hàm số và trực quan hóa dữ liệu</p>
             </div>
           </div>
@@ -184,6 +178,10 @@ export default function HomePage() {
               <div key={i} className="h-64 bg-white rounded-xl border border-slate-200 animate-pulse"></div>
             ))}
           </div>
+        ) : mathModels.length === 0 ? (
+          <div className="text-center py-8 bg-white rounded-xl border border-slate-100 text-slate-400 text-sm">
+            Chưa có mô hình Toán học nào. Hãy bấm &quot;Thêm mô hình&quot; để tải lên.
+          </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
             {mathModels.map((model) => (
@@ -197,7 +195,7 @@ export default function HomePage() {
         )}
       </section>
 
-      {/* MÔ HÌNH VẬT LÝ NỔI BẬT */}
+      {/* MÔ HÌNH VẬT LÝ */}
       <section className="space-y-4">
         <div className="flex items-center justify-between border-b border-slate-200 pb-3">
           <div className="flex items-center gap-2">
@@ -205,7 +203,7 @@ export default function HomePage() {
               <Atom className="w-4 h-4" />
             </div>
             <div>
-              <h2 className="text-lg font-bold text-slate-900">Mô hình Vật lý tiêu biểu</h2>
+              <h2 className="text-lg font-bold text-slate-900">Mô hình Vật lý</h2>
               <p className="text-xs text-slate-500">Cơ học, dao động, nhiệt động lực học và mô phỏng thí nghiệm</p>
             </div>
           </div>
@@ -222,6 +220,10 @@ export default function HomePage() {
             {[1, 2, 3].map((i) => (
               <div key={i} className="h-64 bg-white rounded-xl border border-slate-200 animate-pulse"></div>
             ))}
+          </div>
+        ) : physicsModels.length === 0 ? (
+          <div className="text-center py-8 bg-white rounded-xl border border-slate-100 text-slate-400 text-sm">
+            Chưa có mô hình Vật lý nào. Hãy bấm &quot;Thêm mô hình&quot; để tải lên.
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">

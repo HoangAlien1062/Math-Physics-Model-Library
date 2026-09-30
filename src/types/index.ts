@@ -1,16 +1,5 @@
 export type Subject = 'math' | 'physics';
 
-export type UserRole = 'user' | 'admin';
-
-export interface User {
-  id: string;
-  email: string;
-  displayName: string;
-  avatarUrl?: string;
-  role: UserRole;
-  createdAt: string;
-}
-
 export interface Category {
   id: string;
   subject: Subject;
@@ -20,7 +9,6 @@ export interface Category {
   orderIndex: number;
 }
 
-export type ModelVisibility = 'public' | 'private';
 export type ModelFileType = 'html' | 'zip';
 export type ModelStatus = 'ready' | 'pending' | 'uploading' | 'processing' | 'failed' | 'deleted';
 
@@ -32,9 +20,6 @@ export interface Model {
   subject: Subject;
   category: string;
   thumbnailUrl?: string;
-  visibility: ModelVisibility;
-  ownerUserId: string;
-  ownerName?: string;
   driveFileId: string;
   driveFolderId?: string;
   entryFile: string;
@@ -43,20 +28,19 @@ export interface Model {
   version: string;
   status: ModelStatus;
   tags: string[];
+  featured?: boolean;
   createdAt: string;
   updatedAt: string;
 }
 
 export interface Favorite {
   id: string;
-  userId: string;
   modelId: string;
   createdAt: string;
 }
 
 export interface RecentView {
   id: string;
-  userId: string;
   modelId: string;
   lastOpenedAt: string;
 }
@@ -66,8 +50,7 @@ export interface StorageStatus {
   connected: boolean;
   adminEmail?: string;
   rootFolderId?: string;
-  publicModelsCount: number;
-  userModelsCount: number;
+  totalModelsCount: number;
   totalFilesCount: number;
   totalSizeBytes?: number;
   lastSyncAt: string;

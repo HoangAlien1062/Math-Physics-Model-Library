@@ -8,12 +8,10 @@ import {
   Search,
   Sigma,
   Atom,
-  SlidersHorizontal,
   ArrowUpDown,
   X,
   FileQuestion,
 } from 'lucide-react';
-import { useAuth } from '@/lib/auth/auth-context';
 
 interface SubjectViewProps {
   subject: Subject;
@@ -22,7 +20,6 @@ interface SubjectViewProps {
 }
 
 export function SubjectView({ subject, title, description }: SubjectViewProps) {
-  const { user } = useAuth();
   const searchParams = useSearchParams();
   const initialSearch = searchParams.get('search') || '';
 
@@ -55,19 +52,17 @@ export function SubjectView({ subject, title, description }: SubjectViewProps) {
       .catch((err) => console.error(err));
   }, [subject]);
 
-  // Fetch user favorites
+  // Fetch favorites
   useEffect(() => {
-    if (user) {
-      fetch('/api/favorites')
-        .then((res) => res.json())
-        .then((data) => {
-          if (data.success && data.favorites) {
-            setFavoriteIds(data.favorites);
-          }
-        })
-        .catch(() => {});
-    }
-  }, [user]);
+    fetch('/api/favorites')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.success && data.favorites) {
+          setFavoriteIds(data.favorites);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   // Fetch models with filters
   useEffect(() => {
