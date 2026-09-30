@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 import { StorageProvider, StorageStatus, StorageFileInfo, UploadModelOptions, UploadResult } from './storage-provider';
 import { Subject } from '@/types';
 
@@ -8,13 +9,30 @@ export class LocalFallbackStorageProvider implements StorageProvider {
   private baseDir: string;
 
   constructor() {
-    this.baseDir = path.join(process.cwd(), '.data', 'storage');
+    // On Vercel / Serverless, /var/task is read-only, only os.tmpdir() is writable
+    if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
+      this.baseDir = path.join(os.tmpdir(), 'math-physics-storage');
+    } else {
+      try {
+        const testDir = path.join(process.cwd(), '.data', 'storage');
+        if (!fs.existsSync(testDir)) {
+          fs.mkdirSync(testDir, { recursive: true });
+        }
+        this.baseDir = testDir;
+      } catch {
+        this.baseDir = path.join(os.tmpdir(), 'math-physics-storage');
+      }
+    }
     this.ensureDirs();
   }
 
   private ensureDirs() {
-    if (!fs.existsSync(this.baseDir)) {
-      fs.mkdirSync(this.baseDir, { recursive: true });
+    try {
+      if (!fs.existsSync(this.baseDir)) {
+        fs.mkdirSync(this.baseDir, { recursive: true });
+      }
+    } catch (e) {
+      console.warn('Could not create storage baseDir:', e);
     }
   }
 

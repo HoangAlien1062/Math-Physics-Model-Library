@@ -99,15 +99,36 @@ interface DataStore {
   recentViews: RecentView[];
 }
 
+import os from 'os';
+
 class DatabaseManager {
   private dataFilePath: string;
   private data: DataStore;
 
   constructor() {
-    const dataDir = path.join(process.cwd(), '.data');
-    if (!fs.existsSync(dataDir)) {
-      fs.mkdirSync(dataDir, { recursive: true });
+    let dataDir: string;
+    if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
+      dataDir = path.join(os.tmpdir(), 'math-physics-data');
+    } else {
+      try {
+        const local = path.join(process.cwd(), '.data');
+        if (!fs.existsSync(local)) {
+          fs.mkdirSync(local, { recursive: true });
+        }
+        dataDir = local;
+      } catch {
+        dataDir = path.join(os.tmpdir(), 'math-physics-data');
+      }
     }
+
+    try {
+      if (!fs.existsSync(dataDir)) {
+        fs.mkdirSync(dataDir, { recursive: true });
+      }
+    } catch (e) {
+      console.warn('Could not create data directory:', e);
+    }
+
     this.dataFilePath = path.join(dataDir, 'db.json');
     this.data = this.loadData();
   }
@@ -146,7 +167,8 @@ class DatabaseManager {
     try {
       fs.writeFileSync(this.dataFilePath, JSON.stringify(data, null, 2), 'utf-8');
     } catch (err) {
-      console.error('Failed to write db.json:', err);
+      // In-memory data is still fully kept for current request
+      console.warn('Filesystem save note (in-memory preserved):', err);
     }
   }
 

@@ -122,10 +122,20 @@ export function UploadModal({ isOpen, onClose, onUploadSuccess }: UploadModalPro
         body: formData,
       });
 
-      const data = await res.json();
+      let data: any = null;
+      const responseText = await res.text();
+      try {
+        data = JSON.parse(responseText);
+      } catch (parseErr) {
+        throw new Error(
+          res.status === 413
+            ? 'Kích thước file vượt quá giới hạn tải lên của máy chủ (Payload Too Large)'
+            : `Máy chủ phản hồi không hợp lệ (${res.status}): ${responseText.slice(0, 120) || 'Không có dữ liệu trả về'}`
+        );
+      }
 
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || 'Lỗi khi tải lên file vào Google Drive');
+      if (!res.ok || !data || !data.success) {
+        throw new Error(data?.error || 'Lỗi khi tải lên file vào Google Drive');
       }
 
       setUploadStatus('ready');
