@@ -3,21 +3,6 @@ import path from 'path';
 import os from 'os';
 import { Category, Favorite, Model, RecentView, Subject } from '@/types';
 import { getSupabaseClient } from '@/lib/supabase/client';
-import { getStorageProvider } from '@/lib/storage';
-import { GoogleDriveStorageProvider } from '@/lib/storage/google-drive-provider';
-
-// Helper to prevent any external cloud query from blocking the serverless function
-async function withTimeout<T = any>(promiseOrThenable: any, timeoutMs = 2500): Promise<T> {
-  let timer: NodeJS.Timeout;
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error('Cloud DB query timed out')), timeoutMs);
-  });
-  try {
-    return await Promise.race([Promise.resolve(promiseOrThenable), timeoutPromise]);
-  } finally {
-    clearTimeout(timer!);
-  }
-}
 
 // Seeded categories for Math and Physics
 export const DEFAULT_CATEGORIES: Category[] = [
@@ -48,7 +33,6 @@ export const DEFAULT_CATEGORIES: Category[] = [
   { id: 'cat-phy-11', subject: 'physics', slug: 'khac', name: 'Khác', orderIndex: 11 },
 ];
 
-// Library models (Clean personal library, no hardcoded demos)
 export const DEFAULT_MODELS: Model[] = [];
 
 interface DataStore {
@@ -73,7 +57,7 @@ function mapDbRowToModel(row: any): Model {
     cachePath: row.cache_path,
     entryFile: row.entry_file || 'index.html',
     fileType: row.file_type || 'html',
-    fileSize: row.file_size,
+    fileSize: row.file_size ? Number(row.file_size) : undefined,
     version: row.version || '1.0.0',
     status: row.status || 'ready',
     tags: Array.isArray(row.tags) ? row.tags : [],
@@ -86,6 +70,7 @@ function mapDbRowToModel(row: any): Model {
 class DatabaseManager {
   private dataFilePath: string;
   private data: DataStore;
+  private categoriesSeeded = false;
 
   constructor() {
     let dataDir: string;
@@ -156,142 +141,26 @@ class DatabaseManager {
     };
   }
 
-  private cloudSynced = false;
-
-  async syncFromCloudStorage(): Promise<void> {
-    if (this.cloudSynced) return;
-
-    // 1. Supabase Storage: Download metadata/db.json
-    const supabase = getSupabaseClient();
-    if (supabase) {
-      try {
-        const { data, error } = await withTimeout(
-          supabase.storage.from('models-cache').download('metadata/db.json'),
-          1500
-        );
-
-        if (!error && data) {
-          const text = await data.text();
-          const parsed = JSON.parse(text);
-          if (parsed && typeof parsed === 'object') {
-            if (Array.isArray(parsed.deletedIds)) {
-              this.data.deletedIds = parsed.deletedIds;
-            }
-            if (Array.isArray(parsed.favorites)) {
-              this.data.favorites = parsed.favorites.filter((fid: string) => !fid.startsWith('demo-'));
-            }
-            if (Array.isArray(parsed.recentViews)) {
-              this.data.recentViews = parsed.recentViews.filter((r: any) => !r.modelId?.startsWith('demo-'));
-            }
-            if (Array.isArray(parsed.models) && parsed.models.length > 0) {
-              this.data.models = this.sanitizeModels(parsed.models);
-              this.saveLocalData(this.data, false);
-              this.cloudSynced = true;
-              return;
-            }
-          }
-        }
-      } catch (e) {
-        // Fallback to Google Drive scan if Supabase Storage is empty
-      }
-    }
-
-    // 2. Google Drive: Master Persistent Source of Truth & File Recovery
-    try {
-      const storage = getStorageProvider();
-      if (storage instanceof GoogleDriveStorageProvider && storage.isConfigured()) {
-        const driveJson = await withTimeout(storage.getDbJson(), 3000);
-        if (driveJson) {
-          const parsed = JSON.parse(driveJson);
-          if (parsed && typeof parsed === 'object') {
-            if (Array.isArray(parsed.deletedIds)) {
-              this.data.deletedIds = parsed.deletedIds;
-            }
-            if (Array.isArray(parsed.models) && parsed.models.length > 0) {
-              this.data.models = this.sanitizeModels(parsed.models);
-              this.saveLocalData(this.data, false);
-              this.cloudSynced = true;
-              return;
-            }
-          }
-        }
-
-        // If no db.json yet or 0 models, SCAN Google Drive Math and Physics folders for user uploaded files!
-        const driveModels = await withTimeout(storage.scanDriveModels(), 6000);
-        if (driveModels && driveModels.length > 0) {
-          this.data.models = this.sanitizeModels(driveModels);
-          this.saveLocalData(this.data, true);
-          this.cloudSynced = true;
-          return;
-        }
-      }
-    } catch (driveErr) {
-      console.warn('[DB] Google Drive sync note:', driveErr);
-    }
-
-    this.cloudSynced = true;
-  }
-
-  private saveLocalData(data: DataStore, syncToCloud = true) {
+  private saveLocalData(data: DataStore) {
     try {
       fs.writeFileSync(this.dataFilePath, JSON.stringify(data, null, 2), 'utf-8');
     } catch (err) {
       console.warn('Filesystem save note:', err);
     }
-
-    if (syncToCloud) {
-      this.saveToCloudStorage(data).catch(() => {});
-    }
   }
 
-  private async saveToCloudStorage(data: DataStore): Promise<void> {
-    const jsonStr = JSON.stringify(data, null, 2);
-
-    // 1. Google Drive (Always syncs between Vercel lambdas)
-    try {
-      const storage = getStorageProvider();
-      if (storage instanceof GoogleDriveStorageProvider && storage.isConfigured()) {
-        storage.saveDbJson(jsonStr).catch((e) =>
-          console.warn('[DB] Google Drive saveDbJson error:', e)
-        );
-      }
-    } catch (e) {}
-
-    // 2. Supabase Storage
-    const supabase = getSupabaseClient();
-    if (supabase) {
-      try {
-        const { data: buckets } = await supabase.storage.listBuckets();
-        const exists = buckets?.some((b) => b.name === 'models-cache');
-        if (!exists) {
-          await supabase.storage.createBucket('models-cache', { public: true });
-        }
-
-        const jsonBuffer = Buffer.from(jsonStr, 'utf-8');
-        await withTimeout(
-          supabase.storage
-            .from('models-cache')
-            .upload('metadata/db.json', jsonBuffer, {
-              contentType: 'application/json',
-              upsert: true,
-            }),
-          3000
-        );
-      } catch (err) {}
-    }
-  }
-
-  // Categories
+  // ==========================================
+  // CATEGORIES
+  // ==========================================
   async getCategories(subject?: Subject): Promise<Category[]> {
-    await this.syncFromCloudStorage();
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
         let q = supabase.from('categories').select('*').order('order_index', { ascending: true });
         if (subject) q = q.eq('subject', subject);
-        
-        const { data, error } = await withTimeout(q, 2000);
-        if (!error && data && data.length > 0) {
+
+        const { data, error } = await q;
+        if (!error && Array.isArray(data) && data.length > 0) {
           return data.map((c: any) => ({
             id: c.id,
             subject: c.subject,
@@ -301,8 +170,22 @@ class DatabaseManager {
             orderIndex: c.order_index,
           }));
         }
+
+        // Auto-seed categories into Supabase if empty
+        if (!error && Array.isArray(data) && data.length === 0 && !this.categoriesSeeded) {
+          this.categoriesSeeded = true;
+          const rowsToInsert = DEFAULT_CATEGORIES.map((c) => ({
+            id: c.id,
+            subject: c.subject,
+            slug: c.slug,
+            name: c.name,
+            icon: c.icon || null,
+            order_index: c.orderIndex,
+          }));
+          supabase.from('categories').upsert(rowsToInsert).then(() => {});
+        }
       } catch (e) {
-        // Fallback to local
+        console.warn('[DB] Supabase getCategories error, falling back to defaults:', e);
       }
     }
 
@@ -315,7 +198,6 @@ class DatabaseManager {
   }
 
   async addCategory(cat: Omit<Category, 'id'>): Promise<Category> {
-    await this.syncFromCloudStorage();
     const newCat: Category = {
       ...cat,
       id: `cat-${Date.now()}`,
@@ -324,44 +206,27 @@ class DatabaseManager {
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
-        await withTimeout(
-          supabase.from('categories').insert({
-            id: newCat.id,
-            subject: newCat.subject,
-            slug: newCat.slug,
-            name: newCat.name,
-            icon: newCat.icon,
-            order_index: newCat.orderIndex,
-          }),
-          2000
-        );
-      } catch (e) {}
+        await supabase.from('categories').insert({
+          id: newCat.id,
+          subject: newCat.subject,
+          slug: newCat.slug,
+          name: newCat.name,
+          icon: newCat.icon,
+          order_index: newCat.orderIndex,
+        });
+      } catch (e) {
+        console.warn('[DB] Supabase addCategory error:', e);
+      }
     }
 
     this.data.categories.push(newCat);
-    this.saveLocalData(this.data, true);
+    this.saveLocalData(this.data);
     return newCat;
   }
 
-  async getDeletedModelIds(): Promise<string[]> {
-    await this.syncFromCloudStorage();
-    const supabase = getSupabaseClient();
-    if (supabase) {
-      try {
-        const { data } = await withTimeout(
-          supabase.from('models').select('id').eq('status', 'deleted'),
-          2000
-        );
-        if (data && Array.isArray(data)) {
-          const ids = data.map((d: any) => d.id);
-          this.data.deletedIds = Array.from(new Set([...(this.data.deletedIds || []), ...ids]));
-        }
-      } catch (e) {}
-    }
-    return this.data.deletedIds || [];
-  }
-
-  // Models
+  // ==========================================
+  // MODELS
+  // ==========================================
   async getModels(params?: {
     subject?: Subject;
     category?: string;
@@ -370,9 +235,8 @@ class DatabaseManager {
     sort?: 'newest' | 'name-asc' | 'name-desc' | 'updated';
   }): Promise<Model[]> {
     const supabase = getSupabaseClient();
-    const deletedIds = this.data.deletedIds || [];
 
-    // 1. Primary Source of Truth: Supabase PostgreSQL Database Table
+    // 1. Primary Source of Truth: Supabase PostgreSQL Database
     if (supabase) {
       try {
         let query = supabase.from('models').select('*').neq('status', 'deleted');
@@ -385,11 +249,9 @@ class DatabaseManager {
         else if (sort === 'newest') query = query.order('created_at', { ascending: false });
         else query = query.order('updated_at', { ascending: false });
 
-        const { data, error } = await withTimeout(query, 2500);
-        if (!error && Array.isArray(data) && data.length > 0) {
-          let models = this.sanitizeModels(data.map(mapDbRowToModel)).filter(
-            (m) => !deletedIds.includes(m.id) && !deletedIds.includes(m.slug)
-          );
+        const { data, error } = await query;
+        if (!error && Array.isArray(data)) {
+          let models = this.sanitizeModels(data.map(mapDbRowToModel));
 
           if (params?.tag) models = models.filter((m) => m.tags.includes(params.tag!));
           if (params?.search) {
@@ -402,48 +264,18 @@ class DatabaseManager {
                 m.category.toLowerCase().includes(q)
             );
           }
+
+          // Cache in memory
           this.data.models = models;
           return models;
         }
       } catch (err) {
-        console.warn('[DB] Supabase getModels query note:', err);
+        console.warn('[DB] Supabase getModels error, using memory cache:', err);
       }
     }
 
-    // 2. Fallback & Auto-Recovery: If Supabase table is empty or cold start, sync from Cloud Storage & Google Drive
-    await this.syncFromCloudStorage();
-    const activeDeletedIds = this.data.deletedIds || [];
-
-    let result = this.sanitizeModels(this.data.models).filter(
-      (m) => m.status !== 'deleted' && !activeDeletedIds.includes(m.id) && !activeDeletedIds.includes(m.slug)
-    );
-
-    // If models were recovered from Google Drive and Supabase DB table exists, auto-sync them into Supabase DB table!
-    if (supabase && result.length > 0) {
-      for (const m of result) {
-        supabase.from('models').upsert({
-          id: m.id,
-          title: m.title,
-          slug: m.slug,
-          description: m.description,
-          subject: m.subject,
-          category: m.category,
-          thumbnail_url: m.thumbnailUrl,
-          drive_file_id: m.driveFileId,
-          drive_folder_id: m.driveFolderId,
-          cache_path: m.cachePath,
-          entry_file: m.entryFile,
-          file_type: m.fileType,
-          file_size: m.fileSize,
-          version: m.version,
-          status: m.status,
-          tags: m.tags,
-          featured: m.featured,
-          created_at: m.createdAt,
-          updated_at: m.updatedAt,
-        }).then(() => {});
-      }
-    }
+    // 2. Fallback to in-memory/local storage if Supabase is offline
+    let result = this.sanitizeModels(this.data.models).filter((m) => m.status !== 'deleted');
 
     if (params?.subject) result = result.filter((m) => m.subject === params.subject);
     if (params?.category && params.category !== 'all') result = result.filter((m) => m.category === params.category);
@@ -471,12 +303,6 @@ class DatabaseManager {
   }
 
   async getModelById(id: string): Promise<Model | null> {
-    await this.syncFromCloudStorage();
-
-    if ((this.data.deletedIds || []).includes(id)) {
-      return null;
-    }
-
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
@@ -487,10 +313,10 @@ class DatabaseManager {
           .neq('status', 'deleted')
           .maybeSingle();
 
-        const { data, error } = await withTimeout(query, 2000);
+        const { data, error } = await query;
 
-        if (!error && data && data.status !== 'deleted' && !(this.data.deletedIds || []).includes(data.id)) {
-          // Update last accessed timestamp in background
+        if (!error && data && data.status !== 'deleted') {
+          // Update last accessed timestamp asynchronously
           supabase
             .from('models')
             .update({ last_accessed_at: new Date().toISOString() })
@@ -499,21 +325,18 @@ class DatabaseManager {
 
           return mapDbRowToModel(data);
         }
-      } catch (e) {}
+      } catch (e) {
+        console.warn('[DB] Supabase getModelById error:', e);
+      }
     }
 
     const found = this.data.models.find(
-      (m) =>
-        (m.id === id || m.slug === id) &&
-        m.status !== 'deleted' &&
-        !(this.data.deletedIds || []).includes(m.id)
+      (m) => (m.id === id || m.slug === id) && m.status !== 'deleted'
     );
     return found || null;
   }
 
   async createModel(model: Omit<Model, 'id' | 'createdAt' | 'updatedAt'>): Promise<Model> {
-    await this.syncFromCloudStorage();
-
     const newModel: Model = {
       ...model,
       id: `model-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
@@ -521,63 +344,59 @@ class DatabaseManager {
       updatedAt: new Date().toISOString(),
     };
 
-    // 1. Immediately store in local memory
-    this.data.models.unshift(newModel);
-    this.saveLocalData(this.data, false);
-
-    // 2. Insert into Supabase PostgreSQL Table & AWAIT IT
+    // 1. Insert into Supabase PostgreSQL Table (Authoritative)
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
-        await withTimeout(
-          supabase
-            .from('models')
-            .upsert({
-              id: newModel.id,
-              title: newModel.title,
-              slug: newModel.slug,
-              description: newModel.description,
-              subject: newModel.subject,
-              category: newModel.category,
-              thumbnail_url: newModel.thumbnailUrl,
-              drive_file_id: newModel.driveFileId,
-              drive_folder_id: newModel.driveFolderId,
-              cache_path: newModel.cachePath,
-              entry_file: newModel.entryFile,
-              file_type: newModel.fileType,
-              file_size: newModel.fileSize,
-              version: newModel.version,
-              status: newModel.status,
-              tags: newModel.tags,
-              featured: newModel.featured,
-              last_accessed_at: new Date().toISOString(),
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-            }),
-          3000
-        );
+        const { error } = await supabase
+          .from('models')
+          .upsert({
+            id: newModel.id,
+            title: newModel.title,
+            slug: newModel.slug,
+            description: newModel.description,
+            subject: newModel.subject,
+            category: newModel.category,
+            thumbnail_url: newModel.thumbnailUrl,
+            drive_file_id: newModel.driveFileId,
+            drive_folder_id: newModel.driveFolderId,
+            cache_path: newModel.cachePath,
+            entry_file: newModel.entryFile,
+            file_type: newModel.fileType,
+            file_size: newModel.fileSize,
+            version: newModel.version,
+            status: newModel.status,
+            tags: newModel.tags,
+            featured: newModel.featured,
+            last_accessed_at: new Date().toISOString(),
+            created_at: newModel.createdAt,
+            updated_at: newModel.updatedAt,
+          });
+
+        if (error) {
+          console.error('[DB] Supabase insert error:', error);
+        }
       } catch (e) {
-        console.warn('[DB] Supabase PG insert notice:', e);
+        console.warn('[DB] Supabase createModel error:', e);
       }
     }
 
-    // 3. Persist to Supabase Storage metadata/db.json & AWAIT IT
-    await this.saveToCloudStorage(this.data);
+    // 2. Save in local memory & disk cache
+    this.data.models.unshift(newModel);
+    this.saveLocalData(this.data);
 
     return newModel;
   }
 
   async updateModel(id: string, updates: Partial<Model>): Promise<Model | null> {
-    await this.syncFromCloudStorage();
-
-    const idx = this.data.models.findIndex((m) => m.id === id);
+    const idx = this.data.models.findIndex((m) => m.id === id || m.slug === id);
     if (idx !== -1) {
       this.data.models[idx] = {
         ...this.data.models[idx],
         ...updates,
         updatedAt: new Date().toISOString(),
       };
-      this.saveLocalData(this.data, false);
+      this.saveLocalData(this.data);
     }
 
     const supabase = getSupabaseClient();
@@ -591,116 +410,148 @@ class DatabaseManager {
         if (updates.version) dbUpdates.version = updates.version;
         if (updates.cachePath) dbUpdates.cache_path = updates.cachePath;
 
-        await withTimeout(
-          supabase
-            .from('models')
-            .update(dbUpdates)
-            .or(`id.eq.${id},slug.eq.${id}`),
-          2000
-        );
-      } catch (e) {}
+        await supabase
+          .from('models')
+          .update(dbUpdates)
+          .or(`id.eq.${id},slug.eq.${id}`);
+      } catch (e) {
+        console.warn('[DB] Supabase updateModel error:', e);
+      }
     }
-
-    await this.saveToCloudStorage(this.data);
 
     return idx !== -1 ? this.data.models[idx] : null;
   }
 
   async deleteModel(id: string): Promise<boolean> {
-    await this.syncFromCloudStorage();
-
-    if (!this.data.deletedIds) {
-      this.data.deletedIds = [];
-    }
-    if (!this.data.deletedIds.includes(id)) {
-      this.data.deletedIds.push(id);
-    }
-
     // 1. Remove from in-memory arrays
     this.data.models = this.data.models.filter((m) => m.id !== id && m.slug !== id);
     this.data.favorites = this.data.favorites.filter((fid) => fid !== id);
     this.data.recentViews = this.data.recentViews.filter((r) => r.modelId !== id);
-    this.saveLocalData(this.data, false);
+    this.saveLocalData(this.data);
 
-    // 2. Hard delete from Supabase PostgreSQL tables so it can never resurrect
+    // 2. Hard delete directly from Supabase PostgreSQL tables (<50ms)
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
-        await withTimeout(
-          supabase.from('models').delete().or(`id.eq.${id},slug.eq.${id}`),
-          2000
-        );
-        supabase.from('favorites').delete().eq('model_id', id).then(() => {});
-        supabase.from('recent_views').delete().eq('model_id', id).then(() => {});
+        await Promise.allSettled([
+          supabase.from('models').delete().eq('id', id),
+          supabase.from('models').delete().eq('slug', id),
+          supabase.from('favorites').delete().eq('model_id', id),
+          supabase.from('recent_views').delete().eq('model_id', id),
+        ]);
       } catch (e) {
         console.warn('[DB] Supabase deleteModel error:', e);
       }
     }
 
-    // 3. Persist deletion to Supabase Storage metadata/db.json & AWAIT IT
-    await this.saveToCloudStorage(this.data);
-
     return true;
   }
 
-  // Favorites
+  // ==========================================
+  // FAVORITES
+  // ==========================================
   async getFavorites(): Promise<string[]> {
-    await this.syncFromCloudStorage();
-    const deletedIds = this.data.deletedIds || [];
-    return (this.data.favorites || []).filter((fid) => !deletedIds.includes(fid) && !fid.startsWith('demo-'));
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        const { data, error } = await supabase.from('favorites').select('model_id');
+        if (!error && Array.isArray(data)) {
+          const ids = data.map((d: any) => d.model_id);
+          this.data.favorites = ids;
+          return ids;
+        }
+      } catch (e) {
+        console.warn('[DB] Supabase getFavorites error:', e);
+      }
+    }
+    return this.data.favorites || [];
   }
 
   async toggleFavorite(modelId: string): Promise<boolean> {
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
-        const { data } = await withTimeout(
-          supabase.from('favorites').select('id').eq('model_id', modelId).maybeSingle(),
-          2000
-        );
+        const { data } = await supabase
+          .from('favorites')
+          .select('id')
+          .eq('model_id', modelId)
+          .maybeSingle();
+
         if (data) {
           await supabase.from('favorites').delete().eq('model_id', modelId);
+          this.data.favorites = this.data.favorites.filter((id) => id !== modelId);
+          this.saveLocalData(this.data);
           return false;
         } else {
           await supabase.from('favorites').insert({ id: `fav-${Date.now()}`, model_id: modelId });
+          if (!this.data.favorites.includes(modelId)) {
+            this.data.favorites.push(modelId);
+          }
+          this.saveLocalData(this.data);
           return true;
         }
-      } catch (e) {}
+      } catch (e) {
+        console.warn('[DB] Supabase toggleFavorite error:', e);
+      }
     }
 
     const idx = this.data.favorites.indexOf(modelId);
     if (idx >= 0) {
       this.data.favorites.splice(idx, 1);
-      this.saveLocalData(this.data, true);
+      this.saveLocalData(this.data);
       return false;
     } else {
       this.data.favorites.push(modelId);
-      this.saveLocalData(this.data, true);
+      this.saveLocalData(this.data);
       return true;
     }
   }
 
-  // Recent Views
+  // ==========================================
+  // RECENT VIEWS
+  // ==========================================
   async getRecentViews(limit: number = 20): Promise<RecentView[]> {
-    await this.syncFromCloudStorage();
-    const deletedIds = this.data.deletedIds || [];
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('recent_views')
+          .select('*')
+          .order('last_opened_at', { ascending: false })
+          .limit(limit);
+
+        if (!error && Array.isArray(data)) {
+          return data.map((r: any) => ({
+            id: r.id,
+            modelId: r.model_id,
+            lastOpenedAt: r.last_opened_at,
+          }));
+        }
+      } catch (e) {
+        console.warn('[DB] Supabase getRecentViews error:', e);
+      }
+    }
+
     return (this.data.recentViews || [])
-      .filter((r) => !deletedIds.includes(r.modelId) && !r.modelId?.startsWith('demo-'))
       .sort((a, b) => new Date(b.lastOpenedAt).getTime() - new Date(a.lastOpenedAt).getTime())
       .slice(0, limit);
   }
 
   async recordRecentView(modelId: string): Promise<void> {
-    await this.syncFromCloudStorage();
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
-        const { data } = await withTimeout(
-          supabase.from('recent_views').select('id').eq('model_id', modelId).maybeSingle(),
-          2000
-        );
+        const { data } = await supabase
+          .from('recent_views')
+          .select('id')
+          .eq('model_id', modelId)
+          .maybeSingle();
+
         if (data) {
-          await supabase.from('recent_views').update({ last_opened_at: new Date().toISOString() }).eq('model_id', modelId);
+          await supabase
+            .from('recent_views')
+            .update({ last_opened_at: new Date().toISOString() })
+            .eq('model_id', modelId);
         } else {
           await supabase.from('recent_views').insert({
             id: `rec-${Date.now()}`,
@@ -708,7 +559,9 @@ class DatabaseManager {
             last_opened_at: new Date().toISOString(),
           });
         }
-      } catch (e) {}
+      } catch (e) {
+        console.warn('[DB] Supabase recordRecentView error:', e);
+      }
     }
 
     const idx = this.data.recentViews.findIndex((r) => r.modelId === modelId);
@@ -722,7 +575,7 @@ class DatabaseManager {
       });
     }
     this.data.recentViews = this.data.recentViews.slice(0, 50);
-    this.saveLocalData(this.data, true);
+    this.saveLocalData(this.data);
   }
 }
 

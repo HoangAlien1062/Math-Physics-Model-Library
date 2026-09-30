@@ -51,29 +51,28 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> | { id: string } }) {
   try {
     const resolvedParams = await Promise.resolve(params);
-    const model = await db.getModelById(resolvedParams.id);
+    const id = resolvedParams.id;
+    const model = await db.getModelById(id);
 
-    // Delete file from Google Drive / Storage Provider if present
+    // 1. Delete from Supabase PostgreSQL Table & Memory immediately (super fast ~50ms)
+    await db.deleteModel(id);
+    if (model) {
+      if (model.id !== id) await db.deleteModel(model.id);
+      if (model.slug && model.slug !== id) await db.deleteModel(model.slug);
+    }
+
+    // 2. Delete cached file from Supabase Storage
+    if (model?.cachePath) {
+      cacheManager.deleteFile(model.cachePath).catch(() => {});
+    }
+
+    // 3. Delete file from Google Drive in background (fire-and-forget so user doesn't wait 8s!)
     if (model?.driveFileId) {
       const storage = getStorageProvider();
-      try {
-        await storage.deleteModel(model.driveFileId, model.driveFolderId);
-      } catch (fileErr) {
-        console.warn('Storage file deletion warning:', fileErr);
-      }
+      storage.deleteModel(model.driveFileId, model.driveFolderId).catch((fileErr) => {
+        console.warn('Background Drive file deletion warning:', fileErr);
+      });
     }
-
-    // Delete cached file from Supabase cache if present
-    if (model?.cachePath) {
-      try {
-        await cacheManager.deleteFile(model.cachePath);
-      } catch (cacheErr) {
-        console.warn('Cache file deletion warning:', cacheErr);
-      }
-    }
-
-    // Mark as deleted in DB (handles demo models & custom models permanently)
-    await db.deleteModel(resolvedParams.id);
 
     return NextResponse.json({ success: true, message: 'Đã xóa mô hình thành công' });
   } catch (error: any) {
