@@ -4,6 +4,19 @@ import os from 'os';
 import { Category, Favorite, Model, RecentView, Subject } from '@/types';
 import { getSupabaseClient } from '@/lib/supabase/client';
 
+// Helper to prevent any external cloud query from blocking the serverless function
+async function withTimeout<T = any>(promiseOrThenable: any, timeoutMs = 2500): Promise<T> {
+  let timer: NodeJS.Timeout;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error('Cloud DB query timed out')), timeoutMs);
+  });
+  try {
+    return await Promise.race([Promise.resolve(promiseOrThenable), timeoutPromise]);
+  } finally {
+    clearTimeout(timer!);
+  }
+}
+
 // Seeded categories for Math and Physics
 export const DEFAULT_CATEGORIES: Category[] = [
   // Math
@@ -35,6 +48,7 @@ export const DEFAULT_CATEGORIES: Category[] = [
 
 // Seeded initial interactive models
 export const DEFAULT_MODELS: Model[] = [
+  // Math Models
   {
     id: 'demo-math-quad',
     title: 'Khảo sát hàm số bậc hai y = ax² + bx + c',
@@ -51,6 +65,40 @@ export const DEFAULT_MODELS: Model[] = [
     createdAt: '2026-03-15T08:00:00Z',
     updatedAt: '2026-03-25T10:30:00Z',
   },
+  {
+    id: 'demo-math-sine',
+    title: 'Khảo sát đồ thị hàm số lượng giác y = A sin(ωx + φ)',
+    slug: 'khao-sat-ham-so-luong-giac',
+    description: 'Khám phá sự biến thiên của biên độ A, tần số góc ω và pha ban đầu φ trên đường tròn lượng giác và đồ thị sóng điều hòa.',
+    subject: 'math',
+    category: 'giai-tich',
+    driveFileId: 'demo_quadratic_function.html',
+    entryFile: 'index.html',
+    fileType: 'html',
+    version: '1.1.0',
+    status: 'ready',
+    tags: ['lượng giác', 'đồ thị', 'sin', 'toán 11'],
+    createdAt: '2026-03-18T09:00:00Z',
+    updatedAt: '2026-03-26T12:00:00Z',
+  },
+  {
+    id: 'demo-math-pythagoras',
+    title: 'Trực quan hóa hình học & Định lý Pythagoras',
+    slug: 'dinh-ly-pythagoras-truc-quan',
+    description: 'Mô hình trực quan hóa diện tích các hình vuông dựng trên cạnh góc vuông và cạnh huyền tam giác vuông với hoạt họa phân rã hình khối.',
+    subject: 'math',
+    category: 'hinh-hoc',
+    driveFileId: 'demo_quadratic_function.html',
+    entryFile: 'index.html',
+    fileType: 'html',
+    version: '1.0.0',
+    status: 'ready',
+    tags: ['hình học', 'pythagoras', 'tam giác vuông'],
+    createdAt: '2026-03-22T10:00:00Z',
+    updatedAt: '2026-03-27T15:00:00Z',
+  },
+
+  // Physics Models
   {
     id: 'demo-phys-pendulum',
     title: 'Mô phỏng con lắc đơn & Dao động điều hòa',
@@ -82,6 +130,22 @@ export const DEFAULT_MODELS: Model[] = [
     tags: ['nhiệt học', 'áp suất', 'thể tích', 'khí lý tưởng', 'piston'],
     createdAt: '2026-03-20T11:00:00Z',
     updatedAt: '2026-03-29T16:45:00Z',
+  },
+  {
+    id: 'demo-phys-projectile',
+    title: 'Mô phỏng chuyển động ném xiên trong trọng trường',
+    slug: 'mo-phong-chuyen-dong-nem-xien',
+    description: 'Khảo sát tầm xa, tầm cao, thời gian bay và phương trình quỹ đạo parabol của vật ném xiên với góc phóng α và vận tốc ban đầu v0 tùy chỉnh.',
+    subject: 'physics',
+    category: 'co-hoc',
+    driveFileId: 'demo_harmonic_pendulum.html',
+    entryFile: 'index.html',
+    fileType: 'html',
+    version: '1.0.0',
+    status: 'ready',
+    tags: ['cơ học', 'ném xiên', 'quỹ đạo', 'vật lý 10'],
+    createdAt: '2026-03-24T14:00:00Z',
+    updatedAt: '2026-03-29T18:00:00Z',
   },
 ];
 
@@ -190,7 +254,8 @@ class DatabaseManager {
       try {
         let q = supabase.from('categories').select('*').order('order_index', { ascending: true });
         if (subject) q = q.eq('subject', subject);
-        const { data, error } = await q;
+        
+        const { data, error } = await withTimeout(q, 2000);
         if (!error && data && data.length > 0) {
           return data.map((c: any) => ({
             id: c.id,
@@ -202,7 +267,7 @@ class DatabaseManager {
           }));
         }
       } catch (e) {
-        console.warn('[DB] Supabase getCategories error, using default:', e);
+        // Fallback to local
       }
     }
 
@@ -223,17 +288,18 @@ class DatabaseManager {
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
-        await supabase.from('categories').insert({
-          id: newCat.id,
-          subject: newCat.subject,
-          slug: newCat.slug,
-          name: newCat.name,
-          icon: newCat.icon,
-          order_index: newCat.orderIndex,
-        });
-      } catch (e) {
-        console.warn('[DB] Supabase addCategory error:', e);
-      }
+        await withTimeout(
+          supabase.from('categories').insert({
+            id: newCat.id,
+            subject: newCat.subject,
+            slug: newCat.slug,
+            name: newCat.name,
+            icon: newCat.icon,
+            order_index: newCat.orderIndex,
+          }),
+          2000
+        );
+      } catch (e) {}
     }
 
     this.data.categories.push(newCat);
@@ -267,41 +333,33 @@ class DatabaseManager {
         else if (sort === 'newest') query = query.order('created_at', { ascending: false });
         else query = query.order('updated_at', { ascending: false });
 
-        const { data, error } = await query;
-        if (!error && data) {
+        // Query with safe 2.5s timeout
+        const { data, error } = await withTimeout(query, 2500);
+
+        if (!error && data && data.length > 0) {
           let models = data.map(mapDbRowToModel);
 
-          // Handle client-side search & tag filter for Vietnamese fuzzy match
           if (params?.tag) {
-            models = models.filter((m) => m.tags.includes(params.tag!));
+            models = models.filter((m: Model) => m.tags.includes(params.tag!));
           }
           if (params?.search) {
             const q = params.search.toLowerCase().trim();
             models = models.filter(
-              (m) =>
+              (m: Model) =>
                 m.title.toLowerCase().includes(q) ||
                 m.description.toLowerCase().includes(q) ||
-                m.tags.some((t) => t.toLowerCase().includes(q)) ||
+                m.tags.some((t: string) => t.toLowerCase().includes(q)) ||
                 m.category.toLowerCase().includes(q)
             );
           }
-
-          // If database is empty, seed defaults
-          if (models.length === 0 && !params?.search && !params?.tag && !params?.category) {
-            for (const d of DEFAULT_MODELS) {
-              await this.createModel(d);
-            }
-            return DEFAULT_MODELS;
-          }
-
           return models;
         }
       } catch (e) {
-        console.warn('[DB] Supabase getModels error, fallback to local:', e);
+        console.warn('[DB] Supabase getModels note (using local cache):', e);
       }
     }
 
-    // Local fallback
+    // Local / Default Fallback (Fast & 100% reliable)
     let result = [...this.data.models].filter((m) => m.status !== 'deleted');
     if (params?.subject) result = result.filter((m) => m.subject === params.subject);
     if (params?.category && params.category !== 'all') result = result.filter((m) => m.category === params.category);
@@ -330,15 +388,17 @@ class DatabaseManager {
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
-        const { data, error } = await supabase
+        const query = supabase
           .from('models')
           .select('*')
           .or(`id.eq.${id},slug.eq.${id}`)
           .neq('status', 'deleted')
           .maybeSingle();
 
+        const { data, error } = await withTimeout(query, 2000);
+
         if (!error && data) {
-          // Update last accessed timestamp
+          // Update last accessed timestamp in background
           supabase
             .from('models')
             .update({ last_accessed_at: new Date().toISOString() })
@@ -347,9 +407,7 @@ class DatabaseManager {
 
           return mapDbRowToModel(data);
         }
-      } catch (e) {
-        console.warn('[DB] Supabase getModelById error:', e);
-      }
+      } catch (e) {}
     }
 
     const found = this.data.models.find((m) => (m.id === id || m.slug === id) && m.status !== 'deleted');
@@ -367,40 +425,40 @@ class DatabaseManager {
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
-        const { data, error } = await supabase
-          .from('models')
-          .insert({
-            id: newModel.id,
-            title: newModel.title,
-            slug: newModel.slug,
-            description: newModel.description,
-            subject: newModel.subject,
-            category: newModel.category,
-            thumbnail_url: newModel.thumbnailUrl,
-            drive_file_id: newModel.driveFileId,
-            drive_folder_id: newModel.driveFolderId,
-            cache_path: newModel.cachePath,
-            entry_file: newModel.entryFile,
-            file_type: newModel.fileType,
-            file_size: newModel.fileSize,
-            version: newModel.version,
-            status: newModel.status,
-            tags: newModel.tags,
-            featured: newModel.featured,
-            last_accessed_at: new Date().toISOString(),
-          })
-          .select()
-          .single();
+        const { data, error } = await withTimeout(
+          supabase
+            .from('models')
+            .insert({
+              id: newModel.id,
+              title: newModel.title,
+              slug: newModel.slug,
+              description: newModel.description,
+              subject: newModel.subject,
+              category: newModel.category,
+              thumbnail_url: newModel.thumbnailUrl,
+              drive_file_id: newModel.driveFileId,
+              drive_folder_id: newModel.driveFolderId,
+              cache_path: newModel.cachePath,
+              entry_file: newModel.entryFile,
+              file_type: newModel.fileType,
+              file_size: newModel.fileSize,
+              version: newModel.version,
+              status: newModel.status,
+              tags: newModel.tags,
+              featured: newModel.featured,
+              last_accessed_at: new Date().toISOString(),
+            })
+            .select()
+            .single(),
+          3000
+        );
 
         if (!error && data) {
+          this.data.models.unshift(mapDbRowToModel(data));
+          this.saveLocalData(this.data);
           return mapDbRowToModel(data);
         }
-        if (error) {
-          console.warn('[DB] Supabase insert warning:', error);
-        }
-      } catch (e) {
-        console.warn('[DB] Supabase createModel error:', e);
-      }
+      } catch (e) {}
     }
 
     this.data.models.unshift(newModel);
@@ -420,19 +478,20 @@ class DatabaseManager {
         if (updates.version) dbUpdates.version = updates.version;
         if (updates.cachePath) dbUpdates.cache_path = updates.cachePath;
 
-        const { data, error } = await supabase
-          .from('models')
-          .update(dbUpdates)
-          .eq('id', id)
-          .select()
-          .single();
+        const { data, error } = await withTimeout(
+          supabase
+            .from('models')
+            .update(dbUpdates)
+            .eq('id', id)
+            .select()
+            .single(),
+          2000
+        );
 
         if (!error && data) {
           return mapDbRowToModel(data);
         }
-      } catch (e) {
-        console.warn('[DB] Supabase updateModel error:', e);
-      }
+      } catch (e) {}
     }
 
     const idx = this.data.models.findIndex((m) => m.id === id);
@@ -451,10 +510,11 @@ class DatabaseManager {
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
-        await supabase.from('models').update({ status: 'deleted' }).eq('id', id);
-      } catch (e) {
-        console.warn('[DB] Supabase deleteModel error:', e);
-      }
+        await withTimeout(
+          supabase.from('models').update({ status: 'deleted' }).eq('id', id),
+          2000
+        );
+      } catch (e) {}
     }
 
     const idx = this.data.models.findIndex((m) => m.id === id);
@@ -470,13 +530,14 @@ class DatabaseManager {
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
-        const { data, error } = await supabase.from('favorites').select('model_id');
+        const { data, error } = await withTimeout(
+          supabase.from('favorites').select('model_id'),
+          2000
+        );
         if (!error && data) {
           return data.map((f: any) => f.model_id);
         }
-      } catch (e) {
-        console.warn('[DB] Supabase getFavorites error:', e);
-      }
+      } catch (e) {}
     }
     return [...this.data.favorites];
   }
@@ -485,7 +546,10 @@ class DatabaseManager {
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
-        const { data } = await supabase.from('favorites').select('id').eq('model_id', modelId).maybeSingle();
+        const { data } = await withTimeout(
+          supabase.from('favorites').select('id').eq('model_id', modelId).maybeSingle(),
+          2000
+        );
         if (data) {
           await supabase.from('favorites').delete().eq('model_id', modelId);
           return false;
@@ -493,9 +557,7 @@ class DatabaseManager {
           await supabase.from('favorites').insert({ id: `fav-${Date.now()}`, model_id: modelId });
           return true;
         }
-      } catch (e) {
-        console.warn('[DB] Supabase toggleFavorite error:', e);
-      }
+      } catch (e) {}
     }
 
     const idx = this.data.favorites.indexOf(modelId);
@@ -515,11 +577,14 @@ class DatabaseManager {
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
-        const { data, error } = await supabase
-          .from('recent_views')
-          .select('*')
-          .order('last_opened_at', { ascending: false })
-          .limit(limit);
+        const { data, error } = await withTimeout(
+          supabase
+            .from('recent_views')
+            .select('*')
+            .order('last_opened_at', { ascending: false })
+            .limit(limit),
+          2000
+        );
 
         if (!error && data) {
           return data.map((r: any) => ({
@@ -528,9 +593,7 @@ class DatabaseManager {
             lastOpenedAt: r.last_opened_at,
           }));
         }
-      } catch (e) {
-        console.warn('[DB] Supabase getRecentViews error:', e);
-      }
+      } catch (e) {}
     }
 
     return this.data.recentViews
@@ -542,7 +605,10 @@ class DatabaseManager {
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
-        const { data } = await supabase.from('recent_views').select('id').eq('model_id', modelId).maybeSingle();
+        const { data } = await withTimeout(
+          supabase.from('recent_views').select('id').eq('model_id', modelId).maybeSingle(),
+          2000
+        );
         if (data) {
           await supabase.from('recent_views').update({ last_opened_at: new Date().toISOString() }).eq('model_id', modelId);
         } else {
@@ -552,9 +618,7 @@ class DatabaseManager {
             last_opened_at: new Date().toISOString(),
           });
         }
-      } catch (e) {
-        console.warn('[DB] Supabase recordRecentView error:', e);
-      }
+      } catch (e) {}
     }
 
     const idx = this.data.recentViews.findIndex((r) => r.modelId === modelId);

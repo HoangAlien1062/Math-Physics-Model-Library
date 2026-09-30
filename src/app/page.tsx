@@ -20,16 +20,31 @@ export default function HomePage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let isCancelled = false;
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      controller.abort();
+      if (!isCancelled) setLoading(false);
+    }, 4000);
+
     // 1. Fetch personal models
-    fetch('/api/models')
-      .then((res) => res.json())
+    fetch('/api/models', { signal: controller.signal })
+      .then(async (res) => {
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res.json();
+      })
       .then((data) => {
-        if (data.success && data.models) {
+        if (!isCancelled && data.success && Array.isArray(data.models)) {
           setAllModels(data.models);
         }
       })
-      .catch((err) => console.error(err))
-      .finally(() => setLoading(false));
+      .catch((err) => {
+        if (!isCancelled) console.warn('Could not fetch models:', err);
+      })
+      .finally(() => {
+        clearTimeout(timer);
+        if (!isCancelled) setLoading(false);
+      });
 
     // 2. Fetch recent and favorites
     fetch('/api/recent')
@@ -49,6 +64,12 @@ export default function HomePage() {
         }
       })
       .catch(() => {});
+
+    return () => {
+      isCancelled = true;
+      controller.abort();
+      clearTimeout(timer);
+    };
   }, []);
 
   const mathModels = allModels.filter((m) => m.subject === 'math').slice(0, 3);

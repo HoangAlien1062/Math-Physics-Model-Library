@@ -66,7 +66,15 @@ export function SubjectView({ subject, title, description }: SubjectViewProps) {
 
   // Fetch models with filters
   useEffect(() => {
+    let isCancelled = false;
     setLoading(true);
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      controller.abort();
+      if (!isCancelled) setLoading(false);
+    }, 4000); // 4 second safety max
+
     const params = new URLSearchParams();
     params.set('subject', subject);
     if (selectedCategory && selectedCategory !== 'all') {
@@ -77,15 +85,33 @@ export function SubjectView({ subject, title, description }: SubjectViewProps) {
     }
     params.set('sort', sortOption);
 
-    fetch(`/api/models?${params.toString()}`)
-      .then((res) => res.json())
+    fetch(`/api/models?${params.toString()}`, { signal: controller.signal })
+      .then(async (res) => {
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res.json();
+      })
       .then((data) => {
-        if (data.success && data.models) {
+        if (!isCancelled && data.success && Array.isArray(data.models)) {
           setModels(data.models);
         }
       })
-      .catch((err) => console.error(err))
-      .finally(() => setLoading(false));
+      .catch((err) => {
+        if (!isCancelled) {
+          console.warn('Could not load models from API, keeping current state:', err);
+        }
+      })
+      .finally(() => {
+        clearTimeout(timer);
+        if (!isCancelled) {
+          setLoading(false);
+        }
+      });
+
+    return () => {
+      isCancelled = true;
+      controller.abort();
+      clearTimeout(timer);
+    };
   }, [subject, selectedCategory, debouncedSearch, sortOption]);
 
   const isMath = subject === 'math';
