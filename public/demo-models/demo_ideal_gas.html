@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mô phỏng Khí lý tưởng & Thuyết động học phân tử</title>
+  <style>
+    :root {
+      --primary: #0284c7;
+      --bg: #f8fafc;
+      --card: #ffffff;
+      --text: #0f172a;
+      --text-muted: #64748b;
+      --border: #e2e8f0;
+      --gauge: #ef4444;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+    header {
+      background: var(--card);
+      border-bottom: 1px solid var(--border);
+      padding: 12px 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .title-group h1 { font-size: 1.15rem; font-weight: 700; }
+    .title-group p { font-size: 0.85rem; color: var(--text-muted); }
+    .pv-badge {
+      background: #eff6ff;
+      color: #1d4ed8;
+      padding: 6px 14px;
+      border-radius: 9999px;
+      font-weight: 700;
+      font-family: monospace;
+      border: 1px solid #bfdbfe;
+    }
+    .main-container {
+      display: flex;
+      flex: 1;
+      height: calc(100vh - 65px);
+    }
+    .simulation-area {
+      flex: 1;
+      position: relative;
+      background: #ffffff;
+    }
+    canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+    .sidebar {
+      width: 320px;
+      background: var(--card);
+      border-left: 1px solid var(--border);
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      overflow-y: auto;
+    }
+    .control-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .control-label {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.9rem;
+      font-weight: 600;
+    }
+    .control-val {
+      font-family: monospace;
+      color: var(--primary);
+      font-weight: 700;
+    }
+    input[type=range] {
+      width: 100%;
+      accent-color: var(--primary);
+      cursor: pointer;
+    }
+    .stats-card {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+      font-size: 0.85rem;
+    }
+    .stat-row {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 6px;
+    }
+    .stat-row:last-child { margin-bottom: 0; }
+    .stat-val { font-weight: 600; }
+    @media (max-width: 768px) {
+      .main-container { flex-direction: column; overflow-y: auto; height: auto; }
+      .simulation-area { height: 350px; min-height: 350px; }
+      .sidebar { width: 100%; border-left: none; border-top: 1px solid var(--border); }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="title-group">
+      <h1>Khí lý tưởng: Thuyết động học phân tử</h1>
+      <p>Nhiệt độ T, Thể tích V và Áp suất P trong xi lanh có piston</p>
+    </div>
+    <div class="pv-badge" id="lawBadge">PV = const (Đẳng nhiệt)</div>
+  </header>
+
+  <div class="main-container">
+    <div class="simulation-area" id="canvasBox">
+      <canvas id="gasCanvas"></canvas>
+    </div>
+
+    <div class="sidebar">
+      <div class="control-group">
+        <div class="control-label">
+          <span>Nhiệt độ T (Kelvin):</span>
+          <span class="control-val" id="valT">300 K</span>
+        </div>
+        <input type="range" id="paramT" min="100" max="600" step="10" value="300">
+      </div>
+
+      <div class="control-group">
+        <div class="control-label">
+          <span>Vị trí Piston (Thể tích V):</span>
+          <span class="control-val" id="valV">50%</span>
+        </div>
+        <input type="range" id="paramV" min="25" max="85" step="1" value="50">
+      </div>
+
+      <div class="control-group">
+        <div class="control-label">
+          <span>Số phân tử N:</span>
+          <span class="control-val" id="valN">60 hạt</span>
+        </div>
+        <input type="range" id="paramN" min="20" max="120" step="5" value="60">
+      </div>
+
+      <div class="stats-card">
+        <div class="stat-row">
+          <span>Áp suất tính toán P:</span>
+          <span class="stat-val" style="color: #ef4444;" id="pressureDisplay">1.20 atm</span>
+        </div>
+        <div class="stat-row">
+          <span>Động năng trung bình:</span>
+          <span class="stat-val" id="energyDisplay">6.21 × 10⁻²¹ J</span>
+        </div>
+        <div class="stat-row">
+          <span>Vận tốc căn quân phương:</span>
+          <span class="stat-val" id="vrmsDisplay">480 m/s</span>
+        </div>
+        <div class="stat-row">
+          <span>Va chạm thành bình:</span>
+          <span class="stat-val" id="hitsDisplay">0 va chạm/s</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    window.addEventListener('load', () => {
+      try {
+        if (window.parent && window.parent !== window) {
+          window.parent.postMessage({ type: 'MODEL_READY', model: 'ideal-gas' }, '*');
+        }
+      } catch (e) {}
+    });
+
+    const canvas = document.getElementById('gasCanvas');
+    const ctx = canvas.getContext('2d');
+    const paramT = document.getElementById('paramT');
+    const paramV = document.getElementById('paramV');
+    const paramN = document.getElementById('paramN');
+    const valT = document.getElementById('valT');
+    const valV = document.getElementById('valV');
+    const valN = document.getElementById('valN');
+    const pressureDisplay = document.getElementById('pressureDisplay');
+    const energyDisplay = document.getElementById('energyDisplay');
+    const vrmsDisplay = document.getElementById('vrmsDisplay');
+    const hitsDisplay = document.getElementById('hitsDisplay');
+
+    let particles = [];
+    let hitsCount = 0;
+    let lastHitsSec = 0;
+    let lastHitsTime = performance.now();
+
+    function resize() {
+      const box = document.getElementById('canvasBox');
+      canvas.width = box.clientWidth * window.devicePixelRatio;
+      canvas.height = box.clientHeight * window.devicePixelRatio;
+    }
+    window.addEventListener('resize', resize);
+
+    function createParticles(count, T) {
+      particles = [];
+      const baseSpeed = Math.sqrt(T / 300) * 2.5;
+      for (let i = 0; i < count; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const speed = baseSpeed * (0.6 + Math.random() * 0.8);
+        particles.push({
+          x: 0.1 + Math.random() * 0.8,
+          y: 0.1 + Math.random() * 0.8,
+          vx: Math.cos(angle) * speed,
+          vy: Math.sin(angle) * speed,
+          radius: 4,
+          color: '#0284c7'
+        });
+      }
+    }
+
+    function update() {
+      const T = parseFloat(paramT.value);
+      const VPercent = parseFloat(paramV.value);
+      const N = parseInt(paramN.value, 10);
+
+      valT.textContent = `${T} K`;
+      valV.textContent = `${VPercent}%`;
+      valN.textContent = `${N} hạt`;
+
+      // Recalculate pressure P = N * T / V
+      const P = (N * (T / 300)) / (VPercent * 0.8);
+      pressureDisplay.textContent = `${P.toFixed(2)} atm`;
+
+      // Energy
+      const kB = 1.38e-23;
+      const E = (1.5 * kB * T).toExponential(2);
+      energyDisplay.textContent = `${E} J`;
+
+      const vrms = Math.round(Math.sqrt((3 * 8.314 * T) / 0.032));
+      vrmsDisplay.textContent = `${vrms} m/s`;
+
+      if (particles.length !== N) {
+        createParticles(N, T);
+      } else {
+        // Adjust speed for temperature
+        const baseSpeed = Math.sqrt(T / 300) * 2.5;
+        particles.forEach(p => {
+          const currentSpeed = Math.hypot(p.vx, p.vy);
+          const factor = (baseSpeed * (0.8 + Math.random() * 0.4)) / (currentSpeed || 1);
+          p.vx *= factor;
+          p.vy *= factor;
+        });
+      }
+    }
+
+    [paramT, paramV, paramN].forEach(el => el.addEventListener('input', update));
+
+    function loop(now) {
+      if (now - lastHitsTime >= 1000) {
+        hitsDisplay.textContent = `${hitsCount} va chạm/s`;
+        hitsCount = 0;
+        lastHitsTime = now;
+      }
+
+      draw();
+      requestAnimationFrame(loop);
+    }
+
+    function draw() {
+      const w = canvas.width;
+      const h = canvas.height;
+      const dpr = window.devicePixelRatio || 1;
+
+      ctx.clearRect(0, 0, w, h);
+
+      // Cylinder Box Dimensions
+      const boxW = Math.min(w * 0.6, 500 * dpr);
+      const boxH = Math.min(h * 0.7, 400 * dpr);
+      const boxX = (w - boxW) / 2;
+      const boxY = (h - boxH) / 2;
+
+      const VPercent = parseFloat(paramV.value) / 100;
+      const pistonX = boxX + boxW * VPercent;
+
+      // Draw Chamber background
+      ctx.fillStyle = '#f1f5f9';
+      ctx.fillRect(boxX, boxY, boxW, boxH);
+
+      // Gas area
+      ctx.fillStyle = '#e0f2fe';
+      ctx.fillRect(boxX, boxY, pistonX - boxX, boxH);
+
+      // Draw Cylinder Walls
+      ctx.strokeStyle = '#334155';
+      ctx.lineWidth = 6 * dpr;
+      ctx.beginPath();
+      // Left wall
+      ctx.moveTo(boxX, boxY);
+      ctx.lineTo(boxX, boxY + boxH);
+      // Top wall
+      ctx.moveTo(boxX, boxY);
+      ctx.lineTo(boxX + boxW, boxY);
+      // Bottom wall
+      ctx.moveTo(boxX, boxY + boxH);
+      ctx.lineTo(boxX + boxW, boxY + boxH);
+      ctx.stroke();
+
+      // Draw Piston
+      ctx.fillStyle = '#64748b';
+      ctx.fillRect(pistonX - 8 * dpr, boxY, 16 * dpr, boxH);
+      // Piston Rod
+      ctx.fillStyle = '#94a3b8';
+      ctx.fillRect(pistonX + 8 * dpr, boxY + boxH / 2 - 8 * dpr, boxW - (pistonX - boxX), 16 * dpr);
+
+      // Update & Draw Particles
+      const gasW = pistonX - boxX;
+      particles.forEach(p => {
+        // Move
+        p.x += (p.vx * dpr);
+        p.y += (p.vy * dpr);
+
+        const realX = boxX + p.x;
+        const realY = boxY + p.y;
+        const r = p.radius * dpr;
+
+        // Collision Left
+        if (p.x - r <= 0) {
+          p.x = r;
+          p.vx = Math.abs(p.vx);
+          hitsCount++;
+        }
+        // Collision Piston (Right)
+        if (p.x + r >= gasW) {
+          p.x = gasW - r;
+          p.vx = -Math.abs(p.vx);
+          hitsCount++;
+        }
+        // Collision Top
+        if (p.y - r <= 0) {
+          p.y = r;
+          p.vy = Math.abs(p.vy);
+          hitsCount++;
+        }
+        // Collision Bottom
+        if (p.y + r >= boxH) {
+          p.y = boxH - r;
+          p.vy = -Math.abs(p.vy);
+          hitsCount++;
+        }
+
+        // Draw particle
+        ctx.beginPath();
+        ctx.arc(boxX + p.x, boxY + p.y, r, 0, Math.PI * 2);
+        ctx.fillStyle = '#0284c7';
+        ctx.fill();
+      });
+
+      // Draw Pressure Gauge Indicator on top of cylinder
+      const gaugeX = boxX + gasW / 2;
+      const gaugeY = boxY - 25 * dpr;
+      ctx.beginPath();
+      ctx.arc(gaugeX, gaugeY, 16 * dpr, 0, Math.PI * 2);
+      ctx.fillStyle = '#ffffff';
+      ctx.fill();
+      ctx.strokeStyle = '#ef4444';
+      ctx.lineWidth = 3 * dpr;
+      ctx.stroke();
+
+      // Gauge needle
+      const Pval = parseFloat(pressureDisplay.textContent);
+      const needleAngle = Math.PI * 0.75 + Math.min(Pval / 4, 1) * Math.PI * 1.5;
+      ctx.beginPath();
+      ctx.moveTo(gaugeX, gaugeY);
+      ctx.lineTo(gaugeX + Math.cos(needleAngle) * 12 * dpr, gaugeY + Math.sin(needleAngle) * 12 * dpr);
+      ctx.strokeStyle = '#ef4444';
+      ctx.lineWidth = 2 * dpr;
+      ctx.stroke();
+    }
+
+    resize();
+    update();
+    createParticles(60, 300);
+    requestAnimationFrame(loop);
+  </script>
+</body>
+</html>
